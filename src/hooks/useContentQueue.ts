@@ -22,7 +22,7 @@ type ConnectionsConfigLike = {
   sheetDeploymentId?: string;
 };
 
-const DEFAULT_GSHEET_WEB_APP_URL = "https://script.google.com/macros/s/AKfycbwUerVxvoXhMXoPEK1v22kpGYCNdd9dkk_IXFlzBAdk01QJ6D0O3nUl-wRhsdCIMjvl/exec";
+const DEFAULT_GSHEET_WEB_APP_URL = "https://script.google.com/macros/s/AKfycbwkTvlhXmTehCJEfJ_ts-w85sDzA4xVNlMpgoyCSAJzKEH6uLwTk7APMGMQ5lEng3FX/exec";
 
 function getSheetEndpointCandidates(): string[] {
   const envSheetUrl = String(import.meta.env.VITE_GSHEET_URL ?? "").trim();

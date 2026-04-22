@@ -449,7 +449,7 @@ const defaultConnections: ConnectionsConfig = {
 };
 
 const DEFAULT_N8N_API_BASE_URL = "https://n8n.kasunmadhuwantha.cv/api/v1";
-const DEFAULT_GSHEET_WEB_APP_URL = "https://script.google.com/macros/s/AKfycbwUerVxvoXhMXoPEK1v22kpGYCNdd9dkk_IXFlzBAdk01QJ6D0O3nUl-wRhsdCIMjvl/exec";
+const DEFAULT_GSHEET_WEB_APP_URL = "https://script.google.com/macros/s/AKfycbwkTvlhXmTehCJEfJ_ts-w85sDzA4xVNlMpgoyCSAJzKEH6uLwTk7APMGMQ5lEng3FX/exec";
 const CONNECTIONS_CONFIG_UPDATED_EVENT = "connections-config-updated";
 
 const getSavedConnectionsConfig = (): Partial<ConnectionsConfig> => {
