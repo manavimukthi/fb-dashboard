@@ -112,7 +112,17 @@ interface VerifyWebhookResponse {
 
 const ALLOWED_EMAIL = "support@ceyliz.tech";
 const ALLOWED_PASSWORD = "ceyliz";
-const VERIFY_WEBHOOK_URL = "/api/verify";
+const VERIFY_PROXY_URL = "/api/verify";
+const VERIFY_DIRECT_URL = "https://n8n.kasunmadhuwantha.cv/webhook/verify";
+const VERIFY_WEBHOOK_URL_FROM_ENV = String(import.meta.env.VITE_VERIFY_WEBHOOK_URL ?? "").trim();
+
+const getVerifyEndpointCandidates = (): string[] => {
+  const candidates = import.meta.env.DEV
+    ? [VERIFY_PROXY_URL, VERIFY_WEBHOOK_URL_FROM_ENV, VERIFY_DIRECT_URL]
+    : [VERIFY_WEBHOOK_URL_FROM_ENV, VERIFY_DIRECT_URL, VERIFY_PROXY_URL];
+
+  return candidates.filter((value, index, array) => value.length > 0 && array.indexOf(value) === index);
+};
 
 const extractVerifyPayload = (input: unknown): VerifyWebhookResponse => {
   if (!input || typeof input !== "object") {
@@ -220,28 +230,45 @@ const LoginPage: React.FC<LoginPageProps> = ({ onSuccess }) => {
     setIsLoading(true);
 
     try {
-      const response = await fetch(VERIFY_WEBHOOK_URL, {
-        method: "POST",
-        headers: {
-          "Content-Type": "text/plain",
-          Accept: "application/json",
-        },
-        body: "yes",
-      });
+      const verifyEndpoints = getVerifyEndpointCandidates();
+      let payload: VerifyWebhookResponse | null = null;
+      let latestError: string | null = null;
 
-      const rawText = await response.text();
-      let rawPayload: unknown = rawText;
-      try {
-        rawPayload = JSON.parse(rawText) as unknown;
-      } catch {
-        // Keep plain-text payload when body is not JSON.
+      for (const endpoint of verifyEndpoints) {
+        try {
+          const response = await fetch(endpoint, {
+            method: "POST",
+            headers: {
+              "Content-Type": "text/plain",
+              Accept: "application/json",
+            },
+            body: "yes",
+          });
+
+          const rawText = await response.text();
+          let rawPayload: unknown = rawText;
+          try {
+            rawPayload = JSON.parse(rawText) as unknown;
+          } catch {
+            // Keep plain-text payload when body is not JSON.
+          }
+
+          if (!response.ok) {
+            latestError = getWebhookErrorMessage(rawPayload);
+            continue;
+          }
+
+          payload = extractVerifyPayload(rawPayload);
+          break;
+        } catch (endpointError) {
+          latestError = endpointError instanceof Error ? endpointError.message : "Could not start verification. Please try again.";
+        }
       }
 
-      if (!response.ok) {
-        throw new Error(getWebhookErrorMessage(rawPayload));
+      if (!payload) {
+        throw new Error(latestError || "Could not start verification. Please try again.");
       }
 
-      const payload = extractVerifyPayload(rawPayload);
       const webhookCode = String(payload.verification_code ?? "").trim();
 
       if (!webhookCode) {

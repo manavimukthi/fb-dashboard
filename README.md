@@ -16,6 +16,7 @@ Set your n8n API key in a local env file:
 ```bash
 VITE_N8N_API_KEY=your_n8n_api_key_here
 VITE_N8N_PAGE_WEBHOOK_URL=https://n8n.kasunmadhuwantha.cv/webhook-test/page-data
+VITE_VERIFY_WEBHOOK_URL=https://n8n.kasunmadhuwantha.cv/webhook/verify
 ```
 
 My Pages webhook flow:
