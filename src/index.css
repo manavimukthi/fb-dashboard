@@ -1,0 +1,83 @@
+@import url("https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&family=Space+Grotesk:wght@500;600;700&display=swap");
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --background: 188 75% 98%;
+  --foreground: 188 40% 12%;
+  --card: 0 0% 100%;
+  --card-foreground: 188 40% 12%;
+  --primary: 183 82% 31%;
+  --primary-foreground: 0 0% 100%;
+  --secondary: 182 22% 90%;
+  --secondary-foreground: 188 44% 18%;
+  --muted: 190 24% 92%;
+  --muted-foreground: 191 16% 38%;
+  --accent: 171 100% 35%;
+  --accent-foreground: 0 0% 100%;
+  --border: 190 20% 86%;
+  --input: 190 20% 84%;
+  --ring: 183 82% 31%;
+}
+
+.dark {
+  --background: 195 24% 8%;
+  --foreground: 193 40% 95%;
+  --card: 196 24% 12%;
+  --card-foreground: 193 40% 95%;
+  --primary: 171 76% 47%;
+  --primary-foreground: 193 70% 7%;
+  --secondary: 194 17% 19%;
+  --secondary-foreground: 193 35% 92%;
+  --muted: 193 18% 16%;
+  --muted-foreground: 192 12% 68%;
+  --accent: 199 90% 56%;
+  --accent-foreground: 193 70% 7%;
+  --border: 193 17% 24%;
+  --input: 193 17% 24%;
+  --ring: 171 76% 47%;
+}
+
+* {
+  @apply border-border;
+}
+
+body {
+  margin: 0;
+  min-width: 320px;
+  min-height: 100vh;
+  font-family: "Manrope", sans-serif;
+  @apply bg-background text-foreground;
+  background-image:
+    radial-gradient(circle at 2% 5%, rgba(0, 179, 155, 0.18), transparent 32%),
+    radial-gradient(circle at 95% 8%, rgba(14, 165, 233, 0.12), transparent 28%),
+    linear-gradient(140deg, rgba(255, 255, 255, 0.75), rgba(233, 255, 251, 0.75));
+  background-attachment: fixed;
+}
+
+.dark body {
+  background-image:
+    radial-gradient(circle at 0% 10%, rgba(22, 163, 74, 0.2), transparent 32%),
+    radial-gradient(circle at 95% 12%, rgba(14, 165, 233, 0.14), transparent 30%),
+    linear-gradient(160deg, rgba(6, 22, 31, 0.92), rgba(4, 27, 30, 0.95));
+}
+
+h1,
+h2,
+h3,
+h4 {
+  font-family: "Space Grotesk", sans-serif;
+}
+
+.grid-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  opacity: 0.35;
+  background-image:
+    linear-gradient(to right, rgba(148, 163, 184, 0.16) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(148, 163, 184, 0.16) 1px, transparent 1px);
+  background-size: 32px 32px;
+}
