@@ -42,13 +42,15 @@ function getSheetEndpointCandidates(): string[] {
   }
 
   const candidates = [
-    "/gsheet-api",
-    "/gsheet-api?action=list",
     envSheetUrl,
     envWebAppUrl,
     configSheetUrl,
     DEFAULT_GSHEET_WEB_APP_URL,
   ];
+
+  if (import.meta.env.DEV) {
+    candidates.unshift("/gsheet-api", "/gsheet-api?action=list");
+  }
 
   return candidates.filter((value, index, array) => value.length > 0 && array.indexOf(value) === index);
 }

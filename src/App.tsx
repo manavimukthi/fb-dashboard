@@ -499,7 +499,7 @@ const resolveN8nApiConfig = (savedConfig: Partial<ConnectionsConfig> = getSavedC
 
   const apiBaseUrls = import.meta.env.DEV
     ? ["/n8n-api", ...directBaseCandidates]
-    : [...directBaseCandidates, "/n8n-api"];
+    : directBaseCandidates;
 
   return {
     apiBaseUrls,
