@@ -642,19 +642,21 @@ function SyncProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   const syncPagesFromGoogleSheet = React.useCallback(async () => {
-    const endpoints = [
-      "/gsheet-api",
-      "/gsheet-api?action=list",
-      "/gsheet-api?format=json",
-      sheetUrl,
-    ].filter((value): value is string => Boolean(value));
+    const endpoints = import.meta.env.DEV
+      ? [
+          "/gsheet-api",
+          "/gsheet-api?action=list",
+          "/gsheet-api?format=json",
+          sheetUrl,
+        ]
+      : [sheetUrl];
 
     for (const endpoint of endpoints) {
       try {
-        const response = await fetch(endpoint, { method: "GET", cache: "no-store" });
+        const response = await fetchWithTimeout(endpoint, { method: "GET", cache: "no-store" });
         if (!response.ok) continue;
 
-        const rawText = await response.text();
+        const rawText = await readResponseText(response);
         let payload: unknown = rawText;
         try {
           payload = JSON.parse(rawText) as unknown;
