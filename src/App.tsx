@@ -497,9 +497,11 @@ const resolveN8nApiConfig = (savedConfig: Partial<ConnectionsConfig> = getSavedC
     .filter((value, index, array) => value.length > 0 && array.indexOf(value) === index)
     .map((value) => value.replace(/\/$/, ""));
 
+  const proxyBase = "/api/n8n";
+
   const apiBaseUrls = import.meta.env.DEV
-    ? ["/n8n-api", ...directBaseCandidates]
-    : directBaseCandidates;
+    ? [proxyBase, "/n8n-api", ...directBaseCandidates]
+    : [proxyBase, ...directBaseCandidates];
 
   return {
     apiBaseUrls,

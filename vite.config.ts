@@ -19,6 +19,12 @@ export default defineConfig(({ mode }) => {
       secure: true,
       rewrite: (path: string) => path.replace("/n8n-api", "/api/v1"),
     },
+    "/api/n8n": {
+      target: "https://n8n.kasunmadhuwantha.cv",
+      changeOrigin: true,
+      secure: true,
+      rewrite: (path: string) => path.replace("/api/n8n", "/api/v1"),
+    },
     "/api/page-data": {
       target: "https://n8n.kasunmadhuwantha.cv",
       changeOrigin: true,
