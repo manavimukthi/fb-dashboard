@@ -450,6 +450,7 @@ const defaultConnections: ConnectionsConfig = {
 
 const DEFAULT_N8N_API_BASE_URL = "https://n8n.kasunmadhuwantha.cv/api/v1";
 const DEFAULT_GSHEET_WEB_APP_URL = "https://script.google.com/macros/s/AKfycbwUerVxvoXhMXoPEK1v22kpGYCNdd9dkk_IXFlzBAdk01QJ6D0O3nUl-wRhsdCIMjvl/exec";
+const CONNECTIONS_CONFIG_UPDATED_EVENT = "connections-config-updated";
 
 const getSavedConnectionsConfig = (): Partial<ConnectionsConfig> => {
   try {
@@ -462,8 +463,25 @@ const getSavedConnectionsConfig = (): Partial<ConnectionsConfig> => {
   }
 };
 
-const resolveN8nApiConfig = (): { apiBaseUrls: string[]; apiKey: string } => {
-  const savedConfig = getSavedConnectionsConfig();
+const useConnectionsConfig = (): Partial<ConnectionsConfig> => {
+  const [config, setConfig] = React.useState<Partial<ConnectionsConfig>>(() => getSavedConnectionsConfig());
+
+  React.useEffect(() => {
+    const refreshConfig = () => setConfig(getSavedConnectionsConfig());
+
+    window.addEventListener("storage", refreshConfig);
+    window.addEventListener(CONNECTIONS_CONFIG_UPDATED_EVENT, refreshConfig as EventListener);
+
+    return () => {
+      window.removeEventListener("storage", refreshConfig);
+      window.removeEventListener(CONNECTIONS_CONFIG_UPDATED_EVENT, refreshConfig as EventListener);
+    };
+  }, []);
+
+  return config;
+};
+
+const resolveN8nApiConfig = (savedConfig: Partial<ConnectionsConfig> = getSavedConnectionsConfig()): { apiBaseUrls: string[]; apiKey: string } => {
 
   const apiKey = String(
     import.meta.env.VITE_N8N_API_KEY ??
@@ -499,6 +517,16 @@ const fetchWithTimeout = async (input: RequestInfo | URL, init?: RequestInit, ti
     window.clearTimeout(timer);
   }
 };
+
+const readResponseText = async (response: Response): Promise<string> => {
+  try {
+    return await response.text();
+  } catch {
+    return "";
+  }
+};
+
+const looksLikeHtml = (value: string): boolean => /<\s*!doctype\s+html|<\s*html|<\s*body|<\s*head/i.test(value.trim().slice(0, 200));
 
 const SyncContext = React.createContext<SyncContextValue | null>(null);
 
@@ -548,7 +576,7 @@ function SyncProvider({ children }: { children: React.ReactNode }) {
   const [lastSyncedAt, setLastSyncedAt] = React.useState<number | null>(null);
   const [failedAttempts, setFailedAttempts] = React.useState(0);
 
-  const savedConnectionsConfig = React.useMemo(() => getSavedConnectionsConfig(), []);
+  const savedConnectionsConfig = useConnectionsConfig();
 
   const webhook =
     String(import.meta.env.VITE_N8N_SYNC_WEBHOOK_URL ?? "").trim() ||
@@ -2494,7 +2522,8 @@ function AutomationsPage() {
   const [error, setError] = React.useState<string | null>(null);
   const [actionLoading, setActionLoading] = React.useState<{ id: string; action: "start" | "stop" } | null>(null);
 
-  const apiConfig = React.useMemo(() => resolveN8nApiConfig(), []);
+  const savedConnectionsConfig = useConnectionsConfig();
+  const apiConfig = React.useMemo(() => resolveN8nApiConfig(savedConnectionsConfig), [savedConnectionsConfig]);
   const { apiBaseUrls, apiKey } = apiConfig;
 
   const getApiError = async (response: Response): Promise<string> => {
@@ -2571,7 +2600,18 @@ function AutomationsPage() {
             continue;
           }
 
-          payload = (await response.json()) as unknown;
+          const rawText = await readResponseText(response);
+          if (looksLikeHtml(rawText)) {
+            latestError = `HTML response from ${apiBaseUrl}/workflows.`;
+            continue;
+          }
+
+          try {
+            payload = JSON.parse(rawText) as unknown;
+          } catch {
+            latestError = `Non-JSON response from ${apiBaseUrl}/workflows.`;
+            continue;
+          }
           break;
         } catch (endpointError) {
           latestError = endpointError instanceof Error ? endpointError.message : latestError;
@@ -2732,7 +2772,8 @@ function WorkflowsPage() {
   const [filter, setFilter] = React.useState<"All" | "Published" | "Unpublished">("All");
   const [search, setSearch] = React.useState("");
 
-  const apiConfig = React.useMemo(() => resolveN8nApiConfig(), []);
+  const savedConnectionsConfig = useConnectionsConfig();
+  const apiConfig = React.useMemo(() => resolveN8nApiConfig(savedConnectionsConfig), [savedConnectionsConfig]);
   const { apiBaseUrls, apiKey } = apiConfig;
 
   const fetchWorkflows = React.useCallback(async () => {
@@ -2746,11 +2787,23 @@ function WorkflowsPage() {
         try {
           const response = await fetchWithTimeout(`${apiBaseUrl}/workflows`, { method: "GET", mode: "cors", headers: { "X-N8N-API-KEY": apiKey } });
           if (!response.ok) {
-            const t = await response.text();
+            const t = await readResponseText(response);
             latestError = `${response.status}: ${t.slice(0, 120)}`;
             continue;
           }
-          payload = (await response.json()) as { data?: unknown[] } | unknown[];
+
+          const rawText = await readResponseText(response);
+          if (looksLikeHtml(rawText)) {
+            latestError = `HTML response from ${apiBaseUrl}/workflows.`;
+            continue;
+          }
+
+          try {
+            payload = JSON.parse(rawText) as { data?: unknown[] } | unknown[];
+          } catch {
+            latestError = `Non-JSON response from ${apiBaseUrl}/workflows.`;
+            continue;
+          }
           break;
         } catch (endpointError) {
           latestError = endpointError instanceof Error ? endpointError.message : latestError;
@@ -3445,6 +3498,7 @@ function ConnectionsPage() {
 
   const saveConfig = () => {
     localStorage.setItem("connections-config", JSON.stringify(config));
+    window.dispatchEvent(new Event(CONNECTIONS_CONFIG_UPDATED_EVENT));
     setSavedToast(true);
   };
 
