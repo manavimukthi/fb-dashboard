@@ -14,7 +14,7 @@ npm run dev
 Set your n8n API key in a local env file:
 
 ```bash
-VITE_N8N_API_KEY=your_n8n_api_key_here
+VITE_N8N_API_KEY=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiI5NWQ1NmVmYi0zNzlhLTQ5Y2MtYTRmMS02OTliMTQyNzQ2MjYiLCJpc3MiOiJuOG4iLCJhdWQiOiJwdWJsaWMtYXBpIiwianRpIjoiZTUyMTk2OWUtM2I5Ny00NjYxLWE1ODktMmQxN2NjMmFjZDBjIiwiaWF0IjoxNzc2ODQzMjg1LCJleHAiOjE3Nzk0MjI0MDB9.wkMAp6agdfarsqIyFabHF1aF7rzYHJcHSKWxtSqT3xQ
 VITE_N8N_PAGE_WEBHOOK_URL=https://n8n.kasunmadhuwantha.cv/webhook-test/page-data
 VITE_VERIFY_WEBHOOK_URL=https://n8n.kasunmadhuwantha.cv/webhook/verify
 ```
@@ -28,10 +28,9 @@ My Pages webhook flow:
 
 The automation page uses:
 
-- `GET https://n8n.n8yland.me/api/v1/workflows`
-- `PATCH https://n8n.n8yland.me/api/v1/workflows/{id}/activate`
-- `PATCH https://n8n.n8yland.me/api/v1/workflows/{id}/deactivate`
-
+- `GET https://n8n.kasunmadhuwantha.cv/api/v1/workflows`
+- `POST https://n8n.kasunmadhuwantha.cv/api/v1/workflows/{id}/activate`
+- `POST https://n8n.kasunmadhuwantha.cv/api/v1/workflows/{id}/deactivate`
 ## Build
 
 ```bash
