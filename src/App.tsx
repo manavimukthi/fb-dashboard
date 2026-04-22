@@ -160,6 +160,8 @@ type ConnectionsConfig = {
   postWebhook: string;
   syncWebhook: string;
   automationWebhook: string;
+  n8nApiBaseUrl: string;
+  n8nApiKey: string;
   sheetDeploymentId: string;
   sheetWebAppUrl: string;
   sheetId: string;
@@ -435,6 +437,8 @@ const defaultConnections: ConnectionsConfig = {
   postWebhook: "",
   syncWebhook: "",
   automationWebhook: "",
+  n8nApiBaseUrl: "",
+  n8nApiKey: "",
   sheetDeploymentId: "",
   sheetWebAppUrl: "",
   sheetId: "",
@@ -442,6 +446,47 @@ const defaultConnections: ConnectionsConfig = {
   autoSyncSeconds: 30,
   realTimeQueueSync: true,
   telegramAlerts: false,
+};
+
+const DEFAULT_N8N_API_BASE_URL = "https://n8n.kasunmadhuwantha.cv/api/v1";
+const DEFAULT_GSHEET_WEB_APP_URL = "https://script.google.com/macros/s/AKfycbwUerVxvoXhMXoPEK1v22kpGYCNdd9dkk_IXFlzBAdk01QJ6D0O3nUl-wRhsdCIMjvl/exec";
+
+const getSavedConnectionsConfig = (): Partial<ConnectionsConfig> => {
+  try {
+    const raw = localStorage.getItem("connections-config");
+    if (!raw) return {};
+    const parsed = JSON.parse(raw) as Partial<ConnectionsConfig>;
+    return parsed && typeof parsed === "object" ? parsed : {};
+  } catch {
+    return {};
+  }
+};
+
+const resolveN8nApiConfig = (): { apiBaseUrls: string[]; apiKey: string } => {
+  const savedConfig = getSavedConnectionsConfig();
+
+  const apiKey = String(
+    import.meta.env.VITE_N8N_API_KEY ??
+      import.meta.env.VITE_N8N_PUBLIC_API_KEY ??
+      savedConfig.n8nApiKey ??
+      ""
+  ).trim();
+
+  const envBase = String(import.meta.env.VITE_N8N_BASE_URL ?? "").trim();
+  const savedBase = String(savedConfig.n8nApiBaseUrl ?? "").trim();
+
+  const directBaseCandidates = [savedBase, envBase, DEFAULT_N8N_API_BASE_URL]
+    .filter((value, index, array) => value.length > 0 && array.indexOf(value) === index)
+    .map((value) => value.replace(/\/$/, ""));
+
+  const apiBaseUrls = import.meta.env.DEV
+    ? ["/n8n-api", ...directBaseCandidates]
+    : [...directBaseCandidates, "/n8n-api"];
+
+  return {
+    apiBaseUrls,
+    apiKey,
+  };
 };
 
 const SyncContext = React.createContext<SyncContextValue | null>(null);
@@ -492,8 +537,19 @@ function SyncProvider({ children }: { children: React.ReactNode }) {
   const [lastSyncedAt, setLastSyncedAt] = React.useState<number | null>(null);
   const [failedAttempts, setFailedAttempts] = React.useState(0);
 
-  const webhook = import.meta.env.VITE_N8N_WEBHOOK_URL;
-  const sheetUrl = import.meta.env.VITE_GSHEET_WEB_APP_URL || import.meta.env.VITE_GSHEET_API_URL;
+  const savedConnectionsConfig = React.useMemo(() => getSavedConnectionsConfig(), []);
+
+  const webhook =
+    String(import.meta.env.VITE_N8N_SYNC_WEBHOOK_URL ?? "").trim() ||
+    String(import.meta.env.VITE_N8N_WEBHOOK_URL ?? "").trim() ||
+    String(savedConnectionsConfig.syncWebhook ?? "").trim() ||
+    String(savedConnectionsConfig.baseWebhookUrl ?? "").trim();
+
+  const sheetUrl =
+    String(import.meta.env.VITE_GSHEET_WEB_APP_URL ?? import.meta.env.VITE_GSHEET_API_URL ?? "").trim() ||
+    String(savedConnectionsConfig.sheetWebAppUrl ?? "").trim() ||
+    (savedConnectionsConfig.sheetDeploymentId ? `https://script.google.com/macros/s/${savedConnectionsConfig.sheetDeploymentId}/exec` : "") ||
+    DEFAULT_GSHEET_WEB_APP_URL;
 
   const parseGoogleSheetPages = React.useCallback((payload: unknown): Array<{ pageId: string; pageName: string; accessToken: string; status: PageStatus }> => {
     const rows: unknown[] = [];
@@ -2427,8 +2483,7 @@ function AutomationsPage() {
   const [error, setError] = React.useState<string | null>(null);
   const [actionLoading, setActionLoading] = React.useState<{ id: string; action: "start" | "stop" } | null>(null);
 
-  const apiBaseUrl = "/n8n-api";
-  const apiKey = String(import.meta.env.VITE_N8N_API_KEY ?? "").trim();
+  const { apiBaseUrls, apiKey } = resolveN8nApiConfig();
 
   const getApiError = async (response: Response): Promise<string> => {
     const fallback = `Request failed (${response.status})`;
@@ -2477,7 +2532,7 @@ function AutomationsPage() {
 
   const fetchWorkflows = React.useCallback(async () => {
     if (!apiKey) {
-      setError("Missing VITE_N8N_API_KEY. Add it to your Vite env file.");
+      setError("Missing n8n API key. Add VITE_N8N_API_KEY or set it in Connections page.");
       setIsLoading(false);
       return;
     }
@@ -2486,19 +2541,35 @@ function AutomationsPage() {
     setError(null);
 
     try {
-      const response = await fetch(`${apiBaseUrl}/workflows`, {
-        method: "GET",
-        mode: "cors",
-        headers: {
-          "X-N8N-API-KEY": apiKey,
-        },
-      });
+      let payload: unknown = null;
+      let latestError = "Could not load workflows.";
 
-      if (!response.ok) {
-        throw new Error(await getApiError(response));
+      for (const apiBaseUrl of apiBaseUrls) {
+        try {
+          const response = await fetch(`${apiBaseUrl}/workflows`, {
+            method: "GET",
+            mode: "cors",
+            headers: {
+              "X-N8N-API-KEY": apiKey,
+            },
+          });
+
+          if (!response.ok) {
+            latestError = await getApiError(response);
+            continue;
+          }
+
+          payload = (await response.json()) as unknown;
+          break;
+        } catch (endpointError) {
+          latestError = endpointError instanceof Error ? endpointError.message : latestError;
+        }
       }
 
-      const payload = (await response.json()) as unknown;
+      if (!payload) {
+        throw new Error(latestError);
+      }
+
       setWorkflows(parseWorkflows(payload));
     } catch (err) {
       const message = err instanceof Error ? err.message : "Could not load workflows.";
@@ -2506,7 +2577,7 @@ function AutomationsPage() {
     } finally {
       setIsLoading(false);
     }
-  }, [apiKey]);
+  }, [apiBaseUrls, apiKey]);
 
   React.useEffect(() => {
     void fetchWorkflows();
@@ -2514,7 +2585,7 @@ function AutomationsPage() {
 
   const setWorkflowState = async (workflow: N8nWorkflow, nextAction: "start" | "stop") => {
     if (!apiKey) {
-      setError("Missing VITE_N8N_API_KEY. Add it to your Vite env file.");
+      setError("Missing n8n API key. Add VITE_N8N_API_KEY or set it in Connections page.");
       return;
     }
 
@@ -2522,17 +2593,34 @@ function AutomationsPage() {
     setError(null);
 
     try {
-      const endpoint = `${apiBaseUrl}/workflows/${encodeURIComponent(workflow.id)}/${nextAction === "start" ? "activate" : "deactivate"}`;
-      const response = await fetch(endpoint, {
-        method: "POST",
-        mode: "cors",
-        headers: {
-          "X-N8N-API-KEY": apiKey,
-        },
-      });
+      let completed = false;
+      let latestError = `Could not ${nextAction} workflow.`;
 
-      if (!response.ok) {
-        throw new Error(await getApiError(response));
+      for (const apiBaseUrl of apiBaseUrls) {
+        try {
+          const endpoint = `${apiBaseUrl}/workflows/${encodeURIComponent(workflow.id)}/${nextAction === "start" ? "activate" : "deactivate"}`;
+          const response = await fetch(endpoint, {
+            method: "POST",
+            mode: "cors",
+            headers: {
+              "X-N8N-API-KEY": apiKey,
+            },
+          });
+
+          if (!response.ok) {
+            latestError = await getApiError(response);
+            continue;
+          }
+
+          completed = true;
+          break;
+        } catch (endpointError) {
+          latestError = endpointError instanceof Error ? endpointError.message : latestError;
+        }
+      }
+
+      if (!completed) {
+        throw new Error(latestError);
       }
 
       setWorkflows((prev) => prev.map((item) => (item.id === workflow.id ? { ...item, active: nextAction === "start" } : item)));
@@ -2632,16 +2720,34 @@ function WorkflowsPage() {
   const [filter, setFilter] = React.useState<"All" | "Published" | "Unpublished">("All");
   const [search, setSearch] = React.useState("");
 
-  const apiBaseUrl = "/n8n-api";
-  const apiKey = String(import.meta.env.VITE_N8N_API_KEY ?? "").trim();
+  const { apiBaseUrls, apiKey } = resolveN8nApiConfig();
 
   const fetchWorkflows = React.useCallback(async () => {
-    if (!apiKey) { setError("Missing VITE_N8N_API_KEY."); setIsLoading(false); return; }
+    if (!apiKey) { setError("Missing n8n API key. Add VITE_N8N_API_KEY or set it in Connections page."); setIsLoading(false); return; }
     setIsLoading(true); setError(null);
     try {
-      const response = await fetch(`${apiBaseUrl}/workflows`, { method: "GET", mode: "cors", headers: { "X-N8N-API-KEY": apiKey } });
-      if (!response.ok) { const t = await response.text(); throw new Error(`${response.status}: ${t.slice(0, 120)}`); }
-      const payload = (await response.json()) as { data?: unknown[] } | unknown[];
+      let payload: { data?: unknown[] } | unknown[] | null = null;
+      let latestError = "Could not load workflows.";
+
+      for (const apiBaseUrl of apiBaseUrls) {
+        try {
+          const response = await fetch(`${apiBaseUrl}/workflows`, { method: "GET", mode: "cors", headers: { "X-N8N-API-KEY": apiKey } });
+          if (!response.ok) {
+            const t = await response.text();
+            latestError = `${response.status}: ${t.slice(0, 120)}`;
+            continue;
+          }
+          payload = (await response.json()) as { data?: unknown[] } | unknown[];
+          break;
+        } catch (endpointError) {
+          latestError = endpointError instanceof Error ? endpointError.message : latestError;
+        }
+      }
+
+      if (!payload) {
+        throw new Error(latestError);
+      }
+
       const list = Array.isArray(payload) ? payload : Array.isArray((payload as { data?: unknown[] }).data) ? (payload as { data: unknown[] }).data : [];
       const parsed: N8nWorkflow[] = [];
       list.forEach((item) => {
@@ -2659,17 +2765,40 @@ function WorkflowsPage() {
       setWorkflows(parsed);
     } catch (err) { setError(err instanceof Error ? err.message : "Could not load workflows."); }
     finally { setIsLoading(false); }
-  }, [apiKey]);
+  }, [apiBaseUrls, apiKey]);
 
   React.useEffect(() => { void fetchWorkflows(); }, [fetchWorkflows]);
 
   const toggleWorkflow = async (workflow: N8nWorkflow) => {
-    if (!apiKey) return;
+    if (!apiKey) {
+      setError("Missing n8n API key. Add VITE_N8N_API_KEY or set it in Connections page.");
+      return;
+    }
     const action = workflow.active ? "deactivate" : "activate";
     setActionLoading(workflow.id);
     try {
-      const response = await fetch(`${apiBaseUrl}/workflows/${encodeURIComponent(workflow.id)}/${action}`, { method: "POST", mode: "cors", headers: { "X-N8N-API-KEY": apiKey } });
-      if (!response.ok) { const t = await response.text(); throw new Error(`${response.status}: ${t.slice(0, 120)}`); }
+      let completed = false;
+      let latestError = `Could not ${action} workflow.`;
+
+      for (const apiBaseUrl of apiBaseUrls) {
+        try {
+          const response = await fetch(`${apiBaseUrl}/workflows/${encodeURIComponent(workflow.id)}/${action}`, { method: "POST", mode: "cors", headers: { "X-N8N-API-KEY": apiKey } });
+          if (!response.ok) {
+            const t = await response.text();
+            latestError = `${response.status}: ${t.slice(0, 120)}`;
+            continue;
+          }
+          completed = true;
+          break;
+        } catch (endpointError) {
+          latestError = endpointError instanceof Error ? endpointError.message : latestError;
+        }
+      }
+
+      if (!completed) {
+        throw new Error(latestError);
+      }
+
       setWorkflows((prev) => prev.map((w) => w.id === workflow.id ? { ...w, active: !w.active } : w));
     } catch (err) { setError(err instanceof Error ? err.message : `Could not ${action} workflow.`); }
     finally { setActionLoading(null); }
@@ -3366,6 +3495,24 @@ function ConnectionsPage() {
             <div>{statusIcon(testStates[field.key] ?? "idle")}</div>
           </div>
         ))}
+
+        <div className="grid grid-cols-1 lg:grid-cols-[220px,1fr] gap-2 items-center pt-2">
+          <p className="text-sm font-medium">n8n API Base URL</p>
+          <Input
+            placeholder="https://n8n.example.com/api/v1"
+            value={config.n8nApiBaseUrl}
+            onChange={(e) => setConfig((prev) => ({ ...prev, n8nApiBaseUrl: e.target.value }))}
+          />
+        </div>
+        <div className="grid grid-cols-1 lg:grid-cols-[220px,1fr] gap-2 items-center">
+          <p className="text-sm font-medium">n8n API Key</p>
+          <Input
+            type="password"
+            placeholder="Paste n8n Public API key"
+            value={config.n8nApiKey}
+            onChange={(e) => setConfig((prev) => ({ ...prev, n8nApiKey: e.target.value }))}
+          />
+        </div>
       </Card>
 
       <Card className="p-5 rounded-2xl border border-white/10 bg-white/95 dark:bg-[#081328] space-y-3">
