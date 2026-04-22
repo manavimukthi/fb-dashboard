@@ -489,6 +489,17 @@ const resolveN8nApiConfig = (): { apiBaseUrls: string[]; apiKey: string } => {
   };
 };
 
+const fetchWithTimeout = async (input: RequestInfo | URL, init?: RequestInit, timeoutMs = 12000): Promise<Response> => {
+  const controller = new AbortController();
+  const timer = window.setTimeout(() => controller.abort(), timeoutMs);
+
+  try {
+    return await fetch(input, { ...init, signal: controller.signal });
+  } finally {
+    window.clearTimeout(timer);
+  }
+};
+
 const SyncContext = React.createContext<SyncContextValue | null>(null);
 
 function useSync() {
@@ -2483,7 +2494,8 @@ function AutomationsPage() {
   const [error, setError] = React.useState<string | null>(null);
   const [actionLoading, setActionLoading] = React.useState<{ id: string; action: "start" | "stop" } | null>(null);
 
-  const { apiBaseUrls, apiKey } = resolveN8nApiConfig();
+  const apiConfig = React.useMemo(() => resolveN8nApiConfig(), []);
+  const { apiBaseUrls, apiKey } = apiConfig;
 
   const getApiError = async (response: Response): Promise<string> => {
     const fallback = `Request failed (${response.status})`;
@@ -2546,7 +2558,7 @@ function AutomationsPage() {
 
       for (const apiBaseUrl of apiBaseUrls) {
         try {
-          const response = await fetch(`${apiBaseUrl}/workflows`, {
+          const response = await fetchWithTimeout(`${apiBaseUrl}/workflows`, {
             method: "GET",
             mode: "cors",
             headers: {
@@ -2599,7 +2611,7 @@ function AutomationsPage() {
       for (const apiBaseUrl of apiBaseUrls) {
         try {
           const endpoint = `${apiBaseUrl}/workflows/${encodeURIComponent(workflow.id)}/${nextAction === "start" ? "activate" : "deactivate"}`;
-          const response = await fetch(endpoint, {
+          const response = await fetchWithTimeout(endpoint, {
             method: "POST",
             mode: "cors",
             headers: {
@@ -2720,7 +2732,8 @@ function WorkflowsPage() {
   const [filter, setFilter] = React.useState<"All" | "Published" | "Unpublished">("All");
   const [search, setSearch] = React.useState("");
 
-  const { apiBaseUrls, apiKey } = resolveN8nApiConfig();
+  const apiConfig = React.useMemo(() => resolveN8nApiConfig(), []);
+  const { apiBaseUrls, apiKey } = apiConfig;
 
   const fetchWorkflows = React.useCallback(async () => {
     if (!apiKey) { setError("Missing n8n API key. Add VITE_N8N_API_KEY or set it in Connections page."); setIsLoading(false); return; }
@@ -2731,7 +2744,7 @@ function WorkflowsPage() {
 
       for (const apiBaseUrl of apiBaseUrls) {
         try {
-          const response = await fetch(`${apiBaseUrl}/workflows`, { method: "GET", mode: "cors", headers: { "X-N8N-API-KEY": apiKey } });
+          const response = await fetchWithTimeout(`${apiBaseUrl}/workflows`, { method: "GET", mode: "cors", headers: { "X-N8N-API-KEY": apiKey } });
           if (!response.ok) {
             const t = await response.text();
             latestError = `${response.status}: ${t.slice(0, 120)}`;
@@ -2782,7 +2795,7 @@ function WorkflowsPage() {
 
       for (const apiBaseUrl of apiBaseUrls) {
         try {
-          const response = await fetch(`${apiBaseUrl}/workflows/${encodeURIComponent(workflow.id)}/${action}`, { method: "POST", mode: "cors", headers: { "X-N8N-API-KEY": apiKey } });
+          const response = await fetchWithTimeout(`${apiBaseUrl}/workflows/${encodeURIComponent(workflow.id)}/${action}`, { method: "POST", mode: "cors", headers: { "X-N8N-API-KEY": apiKey } });
           if (!response.ok) {
             const t = await response.text();
             latestError = `${response.status}: ${t.slice(0, 120)}`;
