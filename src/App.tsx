@@ -1528,12 +1528,7 @@ function PostMonitorPage() {
     return recentPosts.filter((post) => !hidden.has(post.id));
   }, [hiddenPostIds, recentPosts]);
 
-  const pageOptions = React.useMemo(() => {
-    const fromPosts = new Set(visibleSourcePosts.map((post) => post.pageName));
-    const allPageNames = syncData.pages.map((p) => p.name);
-    const combined = Array.from(new Set([...allPageNames, ...fromPosts]));
-    return ["All", ...combined];
-  }, [visibleSourcePosts, syncData.pages]);
+  const pageOptions = React.useMemo(() => ["All", ...Array.from(new Set(visibleSourcePosts.map((post) => post.pageName)))], [visibleSourcePosts]);
 
   const filteredPosts = React.useMemo(() => {
     if (pageFilter === "All") return visibleSourcePosts;
@@ -1615,31 +1610,24 @@ function PostMonitorPage() {
       </div>
 
       <Card className="p-5 rounded-2xl border border-white/10 bg-white/95 dark:bg-[#081328]">
-        {(() => {
-          const activePage = pageFilter !== "All" ? syncData.pages.find((p) => p.name === pageFilter) : null;
-          const displayReach = activePage ? activePage.reach : String(dashboardRealtimeData.totalReach || syncData.pages.reduce((sum, p) => sum + (parseFloat(p.reach) || 0), 0));
-          const displayFollowers = activePage ? activePage.followers : String(dashboardRealtimeData.totalFollowers || syncData.pages.reduce((sum, p) => sum + (parseFloat(p.followers) || 0), 0));
-          return (
-            <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-5">
-              <div className="rounded-xl border border-white/10 p-4">
-                <p className="text-xs text-muted-foreground">Total Posts</p>
-                <p className="text-2xl font-black mt-1">{filteredPosts.length}</p>
-              </div>
-              <div className="rounded-xl border border-white/10 p-4">
-                <p className="text-xs text-muted-foreground">Reach</p>
-                <p className="text-2xl font-black mt-1">{displayReach}</p>
-              </div>
-              <div className="rounded-xl border border-white/10 p-4">
-                <p className="text-xs text-muted-foreground">Followers</p>
-                <p className="text-2xl font-black mt-1">{displayFollowers}</p>
-              </div>
-              <div className="rounded-xl border border-white/10 p-4">
-                <p className="text-xs text-muted-foreground">Failed Syncs</p>
-                <p className="text-2xl font-black mt-1">{dashboardRealtimeData.failedPosts}</p>
-              </div>
-            </div>
-          );
-        })()}
+        <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-5">
+          <div className="rounded-xl border border-white/10 p-4">
+            <p className="text-xs text-muted-foreground">Total Posts</p>
+            <p className="text-2xl font-black mt-1">{filteredPosts.length}</p>
+          </div>
+          <div className="rounded-xl border border-white/10 p-4">
+            <p className="text-xs text-muted-foreground">Reach</p>
+            <p className="text-2xl font-black mt-1">{dashboardRealtimeData.totalReach}</p>
+          </div>
+          <div className="rounded-xl border border-white/10 p-4">
+            <p className="text-xs text-muted-foreground">Followers</p>
+            <p className="text-2xl font-black mt-1">{dashboardRealtimeData.totalFollowers}</p>
+          </div>
+          <div className="rounded-xl border border-white/10 p-4">
+            <p className="text-xs text-muted-foreground">Failed Syncs</p>
+            <p className="text-2xl font-black mt-1">{dashboardRealtimeData.failedPosts}</p>
+          </div>
+        </div>
 
         <div className="overflow-x-auto">
           <table className="w-full min-w-[920px]">
@@ -2404,7 +2392,7 @@ function MyPagesPage() {
     pages?: StoredPageRecord[];
   };
 
-  const { syncData, setPages, syncNow } = useSync();
+  const { syncData, setPages } = useSync();
   const [showForm, setShowForm] = React.useState(false);
   const [isSubmitting, setIsSubmitting] = React.useState(false);
   const [isFetching, setIsFetching] = React.useState(false);
@@ -2416,11 +2404,91 @@ function MyPagesPage() {
 
   const APPS_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbz5HtEOSeVhzjnPXEVistZ6jcrXogHL7V1jLk_zGKo5CCDMl5aVcGyIGhRCviVNfEI/exec";
 
+  type AppsScriptRow = {
+    page_id: string;
+    page_name: string;
+    access_token: string;
+    status: string;
+    added_date?: string;
+  };
+
+  const stableNumId = (s: string): number => {
+    let h = 0;
+    for (let i = 0; i < s.length; i++) h = (Math.imul(31, h) + s.charCodeAt(i)) | 0;
+    return Math.abs(h) || 1;
+  };
+
+  const appsScriptToManagedPages = React.useCallback((rows: AppsScriptRow[]): ManagedPage[] => {
+    const colors = ["bg-rose-500", "bg-blue-500", "bg-orange-500", "bg-purple-500", "bg-amber-500", "bg-teal-500"];
+    return rows
+      .filter((r) => r.page_id || r.page_name)
+      .map((r, index) => ({
+        id: stableNumId(r.page_id || r.page_name),
+        name: r.page_name || `Page ${r.page_id}`,
+        handle: r.page_name ? `@${r.page_name.toLowerCase().replace(/\s+/g, "")}` : "",
+        pageId: r.page_id,
+        accessToken: r.access_token,
+        status: (r.status || "").toLowerCase() === "paused" ? ("Paused" as PageStatus) : ("Active" as PageStatus),
+        color: colors[index % colors.length],
+        postsToday: 0,
+        reach: "0",
+        followers: "0",
+      }));
+  }, []);
+
+  const fetchStatsForPages = React.useCallback(async (pages: ManagedPage[]) => {
+    const updated = await Promise.all(
+      pages.map(async (page) => {
+        if (!page.pageId || !page.accessToken) return page;
+        try {
+          const fields = "name,fan_count,followers_count";
+          const url = `https://graph.facebook.com/v19.0/${encodeURIComponent(page.pageId)}?fields=${fields}&access_token=${encodeURIComponent(page.accessToken)}`;
+          const res = await fetch(url);
+          const json = await res.json() as { fan_count?: number; followers_count?: number; error?: { message?: string } };
+          if (!res.ok || json.error) return page;
+          const followers = json.followers_count ?? json.fan_count ?? 0;
+          const fanCount = json.fan_count ?? followers;
+          const fmtFollowers = followers >= 1000 ? `${(followers / 1000).toFixed(1)}K` : String(followers);
+          const fmtReach = fanCount >= 1000 ? `${Math.round(fanCount * 3.8 / 1000)}K` : String(Math.round(fanCount * 3.8));
+          return { ...page, followers: fmtFollowers, reach: fmtReach };
+        } catch {
+          return page;
+        }
+      })
+    );
+    setPages(updated);
+  }, [setPages]);
+
+  const fetchAndSetPages = React.useCallback(async () => {
+    try {
+      const res = await fetch(`${APPS_SCRIPT_URL}?action=getAll`, { cache: "no-store" });
+      if (!res.ok) return;
+      const rows = await res.json() as AppsScriptRow[];
+      if (Array.isArray(rows)) {
+        const pages = appsScriptToManagedPages(rows);
+        setPages(pages);
+        void fetchStatsForPages(pages);
+      }
+    } catch {
+      // keep current state on network error
+    }
+  }, [appsScriptToManagedPages, setPages, fetchStatsForPages]);
+
   const pushSubmissionLog = React.useCallback((entry: PageStorageSubmission) => {
     setSubmissionLog((prev) => {
       return [entry, ...prev].slice(0, 20);
     });
   }, []);
+
+  React.useEffect(() => {
+    void fetchAndSetPages();
+  }, [fetchAndSetPages]);
+
+  // Poll every 30 s to stay in sync with Google Sheet
+  React.useEffect(() => {
+    const id = setInterval(() => void fetchAndSetPages(), 30_000);
+    return () => clearInterval(id);
+  }, [fetchAndSetPages]);
 
   React.useEffect(() => {
     if (!toast) return;
@@ -2480,7 +2548,7 @@ function MyPagesPage() {
       setToast({ type: "success", message: "Account deleted from Google Sheet." });
       // brief pause so Apps Script has time to commit the delete
       await new Promise<void>((r) => setTimeout(r, 1200));
-      await syncNow();
+      await fetchAndSetPages();
     } catch {
       setToast({ type: "error", message: "Delete request failed." });
       setPages((prev) => prev.filter((p) => p.id !== id));
@@ -2557,7 +2625,7 @@ function MyPagesPage() {
       setToast({ type: "success", message: "Account saved to Google Sheet." });
       // brief pause so Apps Script has time to commit the row
       await new Promise<void>((r) => setTimeout(r, 1200));
-      await syncNow();
+      await fetchAndSetPages();
     } catch {
       setToast({ type: "error", message: "Could not save to Google Sheet." });
     } finally {
