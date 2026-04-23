@@ -2,7 +2,7 @@ import { defineConfig, loadEnv, type ProxyOptions } from "vite";
 import react from "@vitejs/plugin-react";
 import { fileURLToPath, URL } from "node:url";
 
-const DEFAULT_PAGE_SHEET_WEBAPP_URL = "https://script.google.com/macros/s/AKfycbxY-ISB9twG0GldEtDNLu_f_dWHv-KmsMXAY9hSht1Vc-6ahTtjBJSWfDWO3UPyqncY/exec";
+const DEFAULT_PAGE_SHEET_WEBAPP_URL = "https://script.google.com/macros/s/AKfycbyAA0fzHZMvz6bqVgypsbz6oKk1oxjPLjkNDRxh3DoakpsIjlGW636o_lpwy9DWuTA/exec";
 
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), "");

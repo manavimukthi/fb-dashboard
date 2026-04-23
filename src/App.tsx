@@ -449,7 +449,7 @@ const defaultConnections: ConnectionsConfig = {
 };
 
 const DEFAULT_N8N_API_BASE_URL = "https://n8n.kasunmadhuwantha.cv/api/v1";
-const DEFAULT_GSHEET_WEB_APP_URL = "https://script.google.com/macros/s/AKfycbxY-ISB9twG0GldEtDNLu_f_dWHv-KmsMXAY9hSht1Vc-6ahTtjBJSWfDWO3UPyqncY/exec";
+const DEFAULT_GSHEET_WEB_APP_URL = "https://script.google.com/macros/s/AKfycbyAA0fzHZMvz6bqVgypsbz6oKk1oxjPLjkNDRxh3DoakpsIjlGW636o_lpwy9DWuTA/exec";
 const CONNECTIONS_CONFIG_UPDATED_EVENT = "connections-config-updated";
 
 const getSavedConnectionsConfig = (): Partial<ConnectionsConfig> => {
@@ -646,11 +646,11 @@ function SyncProvider({ children }: { children: React.ReactNode }) {
   const syncPagesFromGoogleSheet = React.useCallback(async () => {
     const endpoints = import.meta.env.DEV
       ? [
-          "/api/page-data?action=read&sheet=Sheet1",
-          "/gsheet-api?action=read&sheet=Sheet1",
+          "/api/page-data?action=read",
+          "/gsheet-api?action=read",
           sheetUrl,
         ]
-      : ["/api/page-data?action=read&sheet=Sheet1", sheetUrl];
+      : ["/api/page-data?action=read", sheetUrl];
 
     for (const endpoint of endpoints) {
       try {
@@ -2114,9 +2114,10 @@ function MyPagesPage() {
 
       const raw = await response.text();
       const json = parsePageStorageResponse(raw);
+      const opOk = response.ok && Boolean(json.ok);
       return {
-        ok: response.ok && Boolean(json.ok),
-        error: response.ok ? "" : json.message || `Storage request failed (${response.status}).`,
+        ok: opOk,
+        error: opOk ? "" : json.message || `Storage request failed (${response.status}).`,
         responseMessage: json.message || "",
         pages: Array.isArray(json.pages) ? json.pages : undefined,
       };
@@ -2141,7 +2142,7 @@ function MyPagesPage() {
   React.useEffect(() => {
     const loadSavedPages = async () => {
       try {
-        const response = await fetch(`${pageMiddlewareUrl}?action=read&sheet=Sheet1`, { method: "GET", cache: "no-store" });
+        const response = await fetch(`${pageMiddlewareUrl}?action=read`, { method: "GET", cache: "no-store" });
         if (!response.ok) return;
         const raw = await response.text();
         const json = parsePageStorageResponse(raw);
@@ -2541,7 +2542,7 @@ function MyPagesPage() {
                   </Badge>
                 </div>
                 <p className="text-xs text-muted-foreground truncate">Page ID: {entry.payload.pageId || "-"}</p>
-                {entry.responseMessage && <p className="text-xs text-muted-foreground truncate">Storage: {entry.responseMessage}</p>}
+                {entry.responseMessage && <p className="text-xs text-muted-foreground truncate">Storage: {entry.responseMessage.slice(0, 140)}</p>}
                 <p className="text-xs text-muted-foreground">{new Date(entry.sentAt).toLocaleString()}</p>
               </div>
             ))}
