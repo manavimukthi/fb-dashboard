@@ -553,14 +553,8 @@ function SyncProvider({ children }: { children: React.ReactNode }) {
 
   const [queue, setQueue] = React.useState<QueueItem[]>(mockQueueData);
 
-  // Load persisted pages from their own key so n8n sync-cache can't overwrite them
-  const [pages, setPages] = React.useState<ManagedPage[]>(() => {
-    try {
-      const saved = localStorage.getItem("registered-pages");
-      if (saved) return JSON.parse(saved) as ManagedPage[];
-    } catch { /* ignore */ }
-    return initialManagedPages;
-  });
+  // Keep hosted page storage as the source of truth.
+  const [pages, setPages] = React.useState<ManagedPage[]>(initialManagedPages);
 
   const [automations, setAutomations] = React.useState<AutomationItem[]>(initialAutomations);
   const [lastUpdated, setLastUpdated] = React.useState(new Date().toISOString());
@@ -586,13 +580,7 @@ function SyncProvider({ children }: { children: React.ReactNode }) {
     String(savedConnectionsConfig.syncWebhook ?? "").trim() ||
     String(savedConnectionsConfig.baseWebhookUrl ?? "").trim();
 
-  const sheetUrl =
-    String(import.meta.env.VITE_GSHEET_WEB_APP_URL ?? import.meta.env.VITE_GSHEET_API_URL ?? "").trim() ||
-    String(savedConnectionsConfig.sheetWebAppUrl ?? "").trim() ||
-    (savedConnectionsConfig.sheetDeploymentId ? `https://script.google.com/macros/s/${savedConnectionsConfig.sheetDeploymentId}/exec` : "") ||
-    DEFAULT_GSHEET_WEB_APP_URL;
-
-  const parseGoogleSheetPages = React.useCallback((payload: unknown): Array<{ pageId: string; pageName: string; accessToken: string; status: PageStatus }> => {
+  const parseGoogleSheetPages = React.useCallback((payload: unknown): Array<{ pageId: string; pageName: string; accessToken: string; status: PageStatus; handle: string; followers: string; reach: string }> => {
     const rows: unknown[] = [];
 
     const pushRows = (value: unknown) => {
@@ -608,6 +596,7 @@ function SyncProvider({ children }: { children: React.ReactNode }) {
       pushRows(data.rows);
       pushRows(data.data);
       pushRows(data.items);
+      pushRows(data.pages);
 
       if (Array.isArray(data.values) && data.values.length > 1 && Array.isArray(data.values[0])) {
         const header = (data.values[0] as unknown[]).map((item) => String(item).trim().toLowerCase());
@@ -633,24 +622,21 @@ function SyncProvider({ children }: { children: React.ReactNode }) {
         if (!row || typeof row !== "object") return null;
         const item = row as Record<string, unknown>;
         const pageId = String(item.page_id ?? item.pageId ?? "").trim();
-        const pageName = String(item.page_name ?? item.pageName ?? "").trim();
+        const pageName = String(item.page_name ?? item.pageName ?? item.displayName ?? "").trim();
+        const handle = String(item.handle ?? "").trim();
         const accessToken = String(item.access_token ?? item.accessToken ?? "").trim();
+        const followers = String(item.followers ?? "").trim();
+        const reach = String(item.reach ?? "").trim();
         const rawStatus = String(item.status ?? "ACTIVE").trim().toUpperCase();
         const status: PageStatus = rawStatus === "ACTIVE" ? "Active" : "Paused";
         if (!pageId && !pageName) return null;
-        return { pageId, pageName, accessToken, status };
+        return { pageId, pageName, accessToken, status, handle, followers, reach };
       })
-      .filter((item): item is { pageId: string; pageName: string; accessToken: string; status: PageStatus } => item !== null);
+      .filter((item): item is { pageId: string; pageName: string; accessToken: string; status: PageStatus; handle: string; followers: string; reach: string } => item !== null);
   }, []);
 
   const syncPagesFromGoogleSheet = React.useCallback(async () => {
-    const endpoints = import.meta.env.DEV
-      ? [
-          "/api/page-data?action=read",
-          "/gsheet-api?action=read",
-          sheetUrl,
-        ]
-      : ["/api/page-data?action=read", sheetUrl];
+    const endpoints = ["/api/page-data?action=read"];
 
     for (const endpoint of endpoints) {
       try {
@@ -667,6 +653,7 @@ function SyncProvider({ children }: { children: React.ReactNode }) {
 
         const parsedPages = parseGoogleSheetPages(payload);
         if (parsedPages.length === 0) {
+          setPages([]);
           return true;
         }
 
@@ -694,7 +681,9 @@ function SyncProvider({ children }: { children: React.ReactNode }) {
                 pageId: sheetPage.pageId || current.pageId,
                 accessToken: sheetPage.accessToken || current.accessToken,
                 status: sheetPage.status,
-                handle: current.handle || normalizedHandle,
+                handle: sheetPage.handle || current.handle || normalizedHandle,
+                followers: sheetPage.followers || current.followers,
+                reach: sheetPage.reach || current.reach,
               };
               return;
             }
@@ -708,14 +697,14 @@ function SyncProvider({ children }: { children: React.ReactNode }) {
             next.push({
               id: generatedId,
               name: sheetPage.pageName || `Page ${idx + 1}`,
-              handle: normalizedHandle,
+              handle: sheetPage.handle || normalizedHandle,
               pageId: sheetPage.pageId,
               accessToken: sheetPage.accessToken,
               status: sheetPage.status,
               color: palette[next.length % palette.length],
               postsToday: 0,
-              reach: "0",
-              followers: "0",
+              reach: sheetPage.reach || "0",
+              followers: sheetPage.followers || "0",
             });
           });
 
@@ -729,7 +718,7 @@ function SyncProvider({ children }: { children: React.ReactNode }) {
     }
 
     return false;
-  }, [parseGoogleSheetPages, sheetUrl]);
+  }, [parseGoogleSheetPages]);
 
   const formatCompactNumber = React.useCallback((value: number): string => {
     if (value >= 1000000) return `${(value / 1000000).toFixed(1)}M`;
@@ -943,11 +932,6 @@ function SyncProvider({ children }: { children: React.ReactNode }) {
 
     setLiveComments(flattened.slice(0, 100));
     return true;
-  }, [pages]);
-
-  // Persist pages whenever they change
-  React.useEffect(() => {
-    localStorage.setItem("registered-pages", JSON.stringify(pages));
   }, [pages]);
 
   React.useEffect(() => {
@@ -2063,98 +2047,68 @@ function MyPagesPage() {
   const [form, setForm] = React.useState({ displayName: "", handle: "", pageId: "", accessToken: "" });
   const [fetchedData, setFetchedData] = React.useState<{ name: string; username: string; followers: string; reach: string } | null>(null);
   const [fetchError, setFetchError] = React.useState<string | null>(null);
-  const [submissionLog, setSubmissionLog] = React.useState<PageStorageSubmission[]>(() => {
-    try {
-      const raw = localStorage.getItem("page-storage-submissions");
-      if (!raw) return [];
-      const parsed = JSON.parse(raw) as PageStorageSubmission[];
-      return Array.isArray(parsed) ? parsed : [];
-    } catch {
-      return [];
-    }
-  });
+  const [submissionLog, setSubmissionLog] = React.useState<PageStorageSubmission[]>([]);
 
-  const pageMiddlewareUrl = "/api/page-data";
-  const parsePageStorageResponse = (raw: string): PageStorageApiResponse => {
-    const trimmed = raw.trim();
-    if (!trimmed) {
-      return { ok: false, message: "Empty response from page storage API." };
-    }
+  const APPS_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbz5HtEOSeVhzjnPXEVistZ6jcrXogHL7V1jLk_zGKo5CCDMl5aVcGyIGhRCviVNfEI/exec";
 
-    try {
-      return JSON.parse(trimmed) as PageStorageApiResponse;
-    } catch {
-      return { ok: false, message: trimmed.slice(0, 180) };
-    }
+  type AppsScriptRow = {
+    page_id: string;
+    page_name: string;
+    access_token: string;
+    status: string;
+    added_date?: string;
   };
 
-  const toManagedPages = React.useCallback((records: StoredPageRecord[]): ManagedPage[] => {
+  const stableNumId = (s: string): number => {
+    let h = 0;
+    for (let i = 0; i < s.length; i++) h = (Math.imul(31, h) + s.charCodeAt(i)) | 0;
+    return Math.abs(h) || 1;
+  };
+
+  const appsScriptToManagedPages = React.useCallback((rows: AppsScriptRow[]): ManagedPage[] => {
     const colors = ["bg-rose-500", "bg-blue-500", "bg-orange-500", "bg-purple-500", "bg-amber-500", "bg-teal-500"];
-    return records.map((record, index) => ({
-      id: Date.now() + index,
-      name: record.displayName,
-      handle: record.handle,
-      pageId: record.pageId,
-      accessToken: record.accessToken,
-      status: record.status === "Paused" ? "Paused" : "Active",
-      color: colors[index % colors.length],
-      postsToday: 0,
-      reach: record.reach || "0",
-      followers: record.followers || "0",
-    }));
+    return rows
+      .filter((r) => r.page_id || r.page_name)
+      .map((r, index) => ({
+        id: stableNumId(r.page_id || r.page_name),
+        name: r.page_name || `Page ${r.page_id}`,
+        handle: r.page_name ? `@${r.page_name.toLowerCase().replace(/\s+/g, "")}` : "",
+        pageId: r.page_id,
+        accessToken: r.access_token,
+        status: (r.status || "").toLowerCase() === "paused" ? ("Paused" as PageStatus) : ("Active" as PageStatus),
+        color: colors[index % colors.length],
+        postsToday: 0,
+        reach: "0",
+        followers: "0",
+      }));
   }, []);
 
-  const postPageStorage = async (action: PageAction, payload: Record<string, unknown>) => {
+  const fetchAndSetPages = React.useCallback(async () => {
     try {
-      const response = await fetch(pageMiddlewareUrl, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action, ...payload }),
-      });
-
-      const raw = await response.text();
-      const json = parsePageStorageResponse(raw);
-      const opOk = response.ok && Boolean(json.ok);
-      return {
-        ok: opOk,
-        error: opOk ? "" : json.message || `Storage request failed (${response.status}).`,
-        responseMessage: json.message || "",
-        pages: Array.isArray(json.pages) ? json.pages : undefined,
-      };
+      const res = await fetch(`${APPS_SCRIPT_URL}?action=getAll`, { cache: "no-store" });
+      if (!res.ok) return;
+      const rows = await res.json() as AppsScriptRow[];
+      if (Array.isArray(rows)) setPages(appsScriptToManagedPages(rows));
     } catch {
-      return {
-        ok: false,
-        error: "Hosted page storage request failed.",
-        responseMessage: "",
-        pages: undefined,
-      };
+      // keep current state on network error
     }
-  };
+  }, [appsScriptToManagedPages, setPages]);
 
   const pushSubmissionLog = React.useCallback((entry: PageStorageSubmission) => {
     setSubmissionLog((prev) => {
-      const next = [entry, ...prev].slice(0, 20);
-      localStorage.setItem("page-storage-submissions", JSON.stringify(next));
-      return next;
+      return [entry, ...prev].slice(0, 20);
     });
   }, []);
 
   React.useEffect(() => {
-    const loadSavedPages = async () => {
-      try {
-        const response = await fetch(`${pageMiddlewareUrl}?action=read`, { method: "GET", cache: "no-store" });
-        if (!response.ok) return;
-        const raw = await response.text();
-        const json = parsePageStorageResponse(raw);
-        if (!json.ok || !Array.isArray(json.pages)) return;
-        setPages(toManagedPages(json.pages));
-      } catch {
-        // Keep local state when storage endpoint is unavailable.
-      }
-    };
+    void fetchAndSetPages();
+  }, [fetchAndSetPages]);
 
-    void loadSavedPages();
-  }, [setPages, toManagedPages]);
+  // Poll every 30 s to stay in sync with Google Sheet
+  React.useEffect(() => {
+    const id = setInterval(() => void fetchAndSetPages(), 30_000);
+    return () => clearInterval(id);
+  }, [fetchAndSetPages]);
 
   React.useEffect(() => {
     if (!toast) return;
@@ -2186,39 +2140,38 @@ function MyPagesPage() {
     if (!window.confirm("Remove this page from the dashboard?")) return;
 
     const page = syncData.pages.find((item) => item.id === id);
-    const displayName = page?.name ?? "";
-    const handle = page?.handle ?? "";
     const pageId = page?.pageId ?? "";
+    const displayName = page?.name ?? "";
 
-    const storageResult = await postPageStorage("delete", {
-      displayName,
-      handle,
-      pageId,
-    });
-
-    pushSubmissionLog({
-      id: Date.now(),
-      sentAt: new Date().toISOString(),
-      ok: storageResult.ok,
-      action: "delete",
-      responseMessage: storageResult.responseMessage,
-      payload: {
-        displayName,
-        handle,
-        pageId,
-      },
-    });
-
-    if (storageResult.pages) {
-      setPages(toManagedPages(storageResult.pages));
-    } else {
-      setPages((prev) => prev.filter((page) => page.id !== id));
+    if (!pageId) {
+      setPages((prev) => prev.filter((p) => p.id !== id));
+      return;
     }
 
-    if (storageResult.ok) {
+    try {
+      await fetch(APPS_SCRIPT_URL, {
+        method: "POST",
+        mode: "no-cors",
+        headers: { "Content-Type": "text/plain" },
+        body: JSON.stringify({ action: "delete", page_id: pageId }),
+      });
+
+      pushSubmissionLog({
+        id: Date.now(),
+        sentAt: new Date().toISOString(),
+        ok: true,
+        action: "delete",
+        responseMessage: "Sent to Google Sheet",
+        payload: { displayName, handle: page?.handle ?? "", pageId },
+      });
+
       setToast({ type: "success", message: "Account deleted from Google Sheet." });
-    } else {
-      setToast({ type: "error", message: storageResult.error || "Delete request failed." });
+      // brief pause so Apps Script has time to commit the delete
+      await new Promise<void>((r) => setTimeout(r, 1200));
+      await fetchAndSetPages();
+    } catch {
+      setToast({ type: "error", message: "Delete request failed." });
+      setPages((prev) => prev.filter((p) => p.id !== id));
     }
   };
 
@@ -2259,105 +2212,42 @@ function MyPagesPage() {
     }
     setIsSubmitting(true);
     try {
-      const normalizedHandle = form.handle
-        ? (form.handle.startsWith("@") ? form.handle : `@${form.handle}`)
-        : (fetchedData?.username ? `@${fetchedData.username}` : `@${form.displayName.toLowerCase().replace(/\s/g, "")}`);
-
-      const existingPage = syncData.pages.find((page) => {
-        const samePageId = Boolean(page.pageId && page.pageId === form.pageId.trim());
-        const sameName = page.name.trim().toLowerCase() === form.displayName.trim().toLowerCase();
-        const sameHandle = page.handle.trim().toLowerCase() === normalizedHandle.trim().toLowerCase();
-        return samePageId || sameName || sameHandle;
+      await fetch(APPS_SCRIPT_URL, {
+        method: "POST",
+        mode: "no-cors",
+        headers: { "Content-Type": "text/plain" },
+        body: JSON.stringify({
+          action: "add",
+          page_id: form.pageId.trim(),
+          page_name: form.displayName.trim(),
+          access_token: form.accessToken.trim(),
+          status: "active",
+          added_date: new Date().toISOString(),
+        }),
       });
-
-      const action: PageAction = existingPage ? "update" : "create";
-
-      const webhookPayload = {
-        displayName: form.displayName.trim(),
-        handle: normalizedHandle,
-        pageId: form.pageId.trim(),
-        accessToken: form.accessToken.trim(),
-        fetchedName: fetchedData?.name,
-        fetchedUsername: fetchedData?.username,
-        followers: fetchedData?.followers,
-        reach: fetchedData?.reach,
-      };
-
-      const storageResult = await postPageStorage(action, webhookPayload);
 
       pushSubmissionLog({
         id: Date.now(),
         sentAt: new Date().toISOString(),
-        ok: storageResult.ok,
-        action,
-        responseMessage: storageResult.responseMessage,
+        ok: true,
+        action: "create",
+        responseMessage: "Sent to Google Sheet",
         payload: {
-          displayName: webhookPayload.displayName,
-          handle: webhookPayload.handle,
-          pageId: webhookPayload.pageId,
-          fetchedName: webhookPayload.fetchedName,
-          fetchedUsername: webhookPayload.fetchedUsername,
-          followers: webhookPayload.followers,
-          reach: webhookPayload.reach,
+          displayName: form.displayName.trim(),
+          handle: form.handle || "",
+          pageId: form.pageId.trim(),
         },
       });
 
-      if (!storageResult.ok) {
-        setToast({ type: "error", message: storageResult.error || "Could not save to Google Sheet." });
-      }
-
-      const colors = ["bg-rose-500", "bg-blue-500", "bg-orange-500", "bg-purple-500", "bg-amber-500", "bg-teal-500"];
-      if (storageResult.pages) {
-        setPages(toManagedPages(storageResult.pages));
-      } else {
-        setPages((prev) => {
-          if (existingPage) {
-            return prev.map((page) =>
-              page.id === existingPage.id
-                ? {
-                    ...page,
-                    name: form.displayName.trim(),
-                    handle: normalizedHandle,
-                    pageId: webhookPayload.pageId,
-                    accessToken: webhookPayload.accessToken,
-                    reach: fetchedData?.reach ?? page.reach,
-                    followers: fetchedData?.followers ?? page.followers,
-                  }
-                : page
-            );
-          }
-
-          return [
-            {
-              id: Date.now(),
-              name: form.displayName.trim(),
-              handle: normalizedHandle,
-              pageId: webhookPayload.pageId,
-              accessToken: webhookPayload.accessToken,
-              status: "Active",
-              color: colors[prev.length % colors.length],
-              postsToday: 0,
-              reach: fetchedData?.reach ?? "0",
-              followers: fetchedData?.followers ?? "0",
-            },
-            ...prev,
-          ];
-        });
-      }
-
-      const responseWantsUpdate = /update|updated|already\s+exist/i.test(storageResult.responseMessage);
       setForm({ displayName: "", handle: "", pageId: "", accessToken: "" });
       setFetchedData(null);
       setShowForm(false);
-      if (storageResult.ok) {
-        if (action === "update" || responseWantsUpdate) {
-          setToast({ type: "success", message: "Account updated in Google Sheet." });
-        } else {
-          setToast({ type: "success", message: "Account saved to Google Sheet." });
-        }
-      }
+      setToast({ type: "success", message: "Account saved to Google Sheet." });
+      // brief pause so Apps Script has time to commit the row
+      await new Promise<void>((r) => setTimeout(r, 1200));
+      await fetchAndSetPages();
     } catch {
-      setToast({ type: "error", message: "Could not register page." });
+      setToast({ type: "error", message: "Could not save to Google Sheet." });
     } finally {
       setIsSubmitting(false);
     }
@@ -2523,14 +2413,14 @@ function MyPagesPage() {
 
       <Card className="rounded-2xl border border-white/10 bg-white/95 dark:bg-[#081328] p-4 space-y-3">
         <div className="flex items-center justify-between gap-3">
-          <h3 className="font-semibold">Google Sheet Storage</h3>
+          <h3 className="font-semibold">Hosted Storage</h3>
           <Badge className="border border-white/20 bg-white/5 text-xs text-muted-foreground">
             {submissionLog.length} stored
           </Badge>
         </div>
 
         {submissionLog.length === 0 ? (
-          <p className="text-sm text-muted-foreground">No Google Sheet storage actions recorded yet.</p>
+          <p className="text-sm text-muted-foreground">No hosted storage actions recorded yet.</p>
         ) : (
           <div className="space-y-2">
             {submissionLog.slice(0, 5).map((entry) => (
