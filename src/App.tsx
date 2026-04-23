@@ -11,7 +11,6 @@ import {
   BarChart3,
   Plus,
   FileText,
-  Upload,
   GitBranch,
   Calendar,
   Blocks,
@@ -23,6 +22,7 @@ import {
   CheckCircle2,
   Zap,
   ChevronRight,
+  ChevronLeft,
   Moon,
   Sun,
   MoreVertical,
@@ -68,7 +68,6 @@ type ViewKey =
   | "Post Monitor"
   | "Compose Post"
   | "Templates"
-  | "Media Library"
   | "Automations"
   | "Schedulers"
   | "Workflows"
@@ -127,6 +126,7 @@ type TemplateItem = {
   usedCount: number;
   accent: string;
   bg: string;
+  html?: string;
 };
 
 type CommentItem = {
@@ -421,7 +421,7 @@ const schedulerEventsSeed: SchedulerEvent[] = [
 
 const menuSections: Array<{ title: string; items: Array<{ icon: React.ComponentType<{ className?: string }>; label: ViewKey }> }> = [
   { title: "Main", items: [{ icon: Home, label: "Dashboard" }, { icon: Layout, label: "Content Queue" }, { icon: BarChart3, label: "Post Monitor" }] },
-  { title: "Content", items: [{ icon: Plus, label: "Compose Post" }, { icon: FileText, label: "Templates" }, { icon: Upload, label: "Media Library" }, { icon: Calendar, label: "Schedulers" }] },
+  { title: "Content", items: [{ icon: Plus, label: "Compose Post" }, { icon: FileText, label: "Templates" }, { icon: Calendar, label: "Schedulers" }] },
   { title: "Automation", items: [{ icon: GitBranch, label: "Automations" }, { icon: Blocks, label: "Workflows" }] },
   { title: "Pages", items: [{ icon: Users, label: "My Pages" }, { icon: MessageSquare, label: "Comment Moderation" }, { icon: TrendingUp, label: "Page Analytics" }] },
   { title: "Settings", items: [{ icon: Settings, label: "Connections" }, { icon: Bell, label: "Notifications" }] },
@@ -1936,83 +1936,304 @@ function ComposePostPage({ initialTemplate }: { initialTemplate?: TemplateName }
   );
 }
 
+function TemplatePreview({ html, title }: { html: string; title: string }) {
+  const containerRef = React.useRef<HTMLDivElement>(null);
+  const [scale, setScale] = React.useState(0.25);
+
+  React.useLayoutEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
+    const obs = new ResizeObserver((entries) => {
+      const w = entries[0]?.contentRect.width ?? 0;
+      if (w > 0) setScale(w / 1080);
+    });
+    obs.observe(el);
+    return () => obs.disconnect();
+  }, []);
+
+  return (
+    <div
+      ref={containerRef}
+      className="relative overflow-hidden bg-white rounded-xl w-full"
+      style={{ aspectRatio: "1080 / 1350" }}
+    >
+      <iframe
+        srcDoc={html || `<body style="margin:0;height:100%;display:flex;align-items:center;justify-content:center;font-family:sans-serif;color:#999;font-size:14px;">No preview</body>`}
+        title={title}
+        sandbox="allow-scripts"
+        scrolling="no"
+        style={{
+          width: 1080,
+          height: 1350,
+          transform: `scale(${scale})`,
+          transformOrigin: "top left",
+          pointerEvents: "none",
+          border: "none",
+          display: "block",
+        }}
+      />
+    </div>
+  );
+}
+
+function TemplateEditor({
+  name, html,
+  onNameChange, onHtmlChange,
+  onSave, onCancel, isNew, saving,
+}: {
+  name: string;
+  html: string;
+  onNameChange: (v: string) => void;
+  onHtmlChange: (v: string) => void;
+  onSave: () => void;
+  onCancel: () => void;
+  isNew: boolean;
+  saving: boolean;
+}) {
+
+  return (
+    <div className="flex flex-col gap-4" style={{ height: "calc(100vh - 120px)" }}>
+      <div className="flex items-center justify-between gap-4">
+        <div className="flex items-center gap-2">
+          <button type="button" onClick={onCancel} className="text-muted-foreground hover:text-foreground p-1 rounded">
+            <ChevronLeft className="h-5 w-5" />
+          </button>
+          <h2 className="text-2xl font-black tracking-tight">{isNew ? "New Template" : "Edit Template"}</h2>
+        </div>
+        <div className="flex gap-2">
+          <Button variant="outline" onClick={onCancel} disabled={saving}>Cancel</Button>
+          <Button className="bg-[#0d9488] hover:bg-[#0f766e] text-white" onClick={onSave} disabled={!name.trim() || saving}>
+            {saving ? "Saving…" : "Save Template"}
+          </Button>
+        </div>
+      </div>
+
+      <div>
+        <label className="text-sm font-medium mb-1 block">Template Name</label>
+        <Input value={name} onChange={(e) => onNameChange(e.target.value)} placeholder="Template name…" className="max-w-md" />
+      </div>
+
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 flex-1 min-h-0">
+        <div className="flex flex-col min-h-0">
+          <label className="text-sm font-medium mb-2">
+            HTML Template <span className="text-muted-foreground font-normal">(1080 × 1350 px canvas)</span>
+          </label>
+          <textarea
+            value={html}
+            onChange={(e) => onHtmlChange(e.target.value)}
+            placeholder="Enter your HTML template here…"
+            spellCheck={false}
+            className="flex-1 w-full rounded-xl border border-border bg-background p-4 font-mono text-sm resize-none focus:outline-none focus:ring-2 focus:ring-[#0d9488] min-h-[300px]"
+          />
+        </div>
+        <div className="flex flex-col min-h-0">
+          <label className="text-sm font-medium mb-2">
+            Live Preview <span className="text-muted-foreground font-normal">1080 × 1350</span>
+          </label>
+          <div className="flex-1 overflow-auto">
+            <TemplatePreview html={html} title={name || "Preview"} />
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function TemplatesPage({ onUseTemplate }: { onUseTemplate: (template: TemplateName) => void }) {
+  const SCRIPT_URL = "https://script.google.com/macros/s/AKfycbwuZP1ETiVjr0_LCirp-sY1vLVXJ8p4P-3_z1grHxULRN-k2PuwqLlSxDpgqglo6Qf7Hw/exec";
+
+  const [templates, setTemplates] = React.useState<TemplateItem[]>([]);
+  const [loading, setLoading] = React.useState(true);
   const [query, setQuery] = React.useState("");
-  const [activeCategory, setActiveCategory] = React.useState<"All" | TemplateCategory>("All");
+  const [editorOpen, setEditorOpen] = React.useState(false);
+  const [editingName, setEditingName] = React.useState<string | null>(null);
+  const [formName, setFormName] = React.useState("");
+  const [formHtml, setFormHtml] = React.useState("");
+  const [saving, setSaving] = React.useState(false);
+
+  const fetchTemplates = React.useCallback(async () => {
+    try {
+      const res = await fetch(`${SCRIPT_URL}?action=getTemplates`, { cache: "no-store" });
+      if (!res.ok) { setLoading(false); return; }
+      const rows = await res.json() as Array<Record<string, string>>;
+      if (Array.isArray(rows)) {
+        setTemplates(
+          rows
+            .filter((r) => r["Template Name"])
+            .map((r, i) => ({
+              id: i + 1,
+              name: r["Template Name"] || "",
+              category: "News" as TemplateCategory,
+              html: r["Template_code"] || "",
+              usedCount: 0,
+              accent: "#0d9488",
+              bg: "from-teal-500/35 to-teal-800/20",
+            }))
+        );
+      }
+    } catch { /* keep empty */ }
+    finally { setLoading(false); }
+  }, [SCRIPT_URL]);
+
+  React.useEffect(() => { void fetchTemplates(); }, [fetchTemplates]);
 
   const filteredTemplates = React.useMemo(() => {
-    return templateItemsData.filter((item) => {
-      const matchesCategory = activeCategory === "All" || item.category === activeCategory;
-      const matchesQuery = item.name.toLowerCase().includes(query.toLowerCase()) || item.category.toLowerCase().includes(query.toLowerCase());
-      return matchesCategory && matchesQuery;
-    });
-  }, [activeCategory, query]);
+    if (!query.trim()) return templates;
+    return templates.filter((item) =>
+      item.name.toLowerCase().includes(query.toLowerCase())
+    );
+  }, [query, templates]);
+
+  const openNew = () => {
+    setEditingName(null);
+    setFormName("");
+    setFormHtml(
+      `<div style="width:1080px;height:1350px;background:#1a1a2e;display:flex;flex-direction:column;justify-content:flex-end;padding:60px;box-sizing:border-box;font-family:sans-serif;">\n  <h1 style="color:#fff;font-size:64px;font-weight:900;margin:0 0 24px;line-height:1.1;">Your Headline Here</h1>\n  <p style="color:rgba(255,255,255,0.75);font-size:32px;margin:0;line-height:1.5;">Your caption goes here.</p>\n</div>`
+    );
+    setEditorOpen(true);
+  };
+
+  const openEdit = (item: TemplateItem) => {
+    setEditingName(item.name);
+    setFormName(item.name);
+    setFormHtml(item.html || "");
+    setEditorOpen(true);
+  };
+
+  const saveTemplate = async () => {
+    setSaving(true);
+    const updated: TemplateItem = {
+      id: editingName !== null ? (templates.find((t) => t.name === editingName)?.id ?? Date.now()) : Date.now(),
+      name: formName,
+      category: "News",
+      html: formHtml,
+      usedCount: 0,
+      accent: "#0d9488",
+      bg: "from-teal-500/35 to-teal-800/20",
+    };
+
+    if (editingName !== null) {
+      setTemplates((prev) => prev.map((t) => (t.name === editingName ? updated : t)));
+    } else {
+      setTemplates((prev) => [...prev, updated]);
+    }
+    setEditorOpen(false);
+
+    try {
+      await fetch(SCRIPT_URL, {
+        method: "POST",
+        mode: "no-cors",
+        headers: { "Content-Type": "text/plain" },
+        body: JSON.stringify({
+          action: "saveTemplate",
+          "Template Name": formName,
+          "Template_code": formHtml,
+        }),
+      });
+      await new Promise<void>((r) => setTimeout(r, 1200));
+      await fetchTemplates();
+    } catch { /* optimistic state stays */ }
+    finally { setSaving(false); }
+  };
+
+  const deleteTemplate = async (item: TemplateItem) => {
+    if (!window.confirm(`Delete "${item.name}"?`)) return;
+    setTemplates((prev) => prev.filter((t) => t.name !== item.name));
+    try {
+      await fetch(SCRIPT_URL, {
+        method: "POST",
+        mode: "no-cors",
+        headers: { "Content-Type": "text/plain" },
+        body: JSON.stringify({ action: "deleteTemplate", "Template Name": item.name }),
+      });
+      await new Promise<void>((r) => setTimeout(r, 1200));
+      await fetchTemplates();
+    } catch { /* optimistic delete stays */ }
+  };
+
+  if (editorOpen) {
+    return (
+      <TemplateEditor
+        name={formName}
+        html={formHtml}
+        onNameChange={setFormName}
+        onHtmlChange={setFormHtml}
+        onSave={saveTemplate}
+        onCancel={() => setEditorOpen(false)}
+        isNew={editingName === null}
+        saving={saving}
+      />
+    );
+  }
 
   return (
     <div className="space-y-5">
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
         <h2 className="text-2xl font-black tracking-tight">Post Templates</h2>
-        <Button className="bg-[#0d9488] hover:bg-[#0f766e] text-white gap-2">
+        <Button className="bg-[#0d9488] hover:bg-[#0f766e] text-white gap-2" onClick={openNew}>
           <Plus className="h-4 w-4" />
           New Template
         </Button>
       </div>
 
-      <div className="flex flex-col lg:flex-row gap-3 lg:items-center justify-between">
-        <div className="relative w-full lg:max-w-sm">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-          <Input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search templates" className="pl-10" />
-        </div>
-        <div className="flex flex-wrap gap-2">
-          {templateCategoryFilters.map((category) => (
-            <button
-              key={category}
-              type="button"
-              onClick={() => setActiveCategory(category)}
-              className={cn(
-                "px-3 py-1.5 rounded-full border text-sm",
-                activeCategory === category ? "bg-[#0d9488] border-[#0d9488] text-white" : "border-border text-muted-foreground hover:text-foreground"
-              )}
-            >
-              {category}
-            </button>
-          ))}
-        </div>
+      <div className="relative w-full lg:max-w-sm">
+        <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+        <Input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search templates" className="pl-10" />
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-        {filteredTemplates.map((item) => (
-          <motion.div key={item.id} whileHover={{ y: -2 }} className="group">
-            <Card className="overflow-hidden rounded-2xl border border-white/10 bg-white/95 dark:bg-[#081328]">
-              <div className="relative aspect-[4/5] p-4 bg-gradient-to-br from-slate-900/80 to-slate-950/95">
-                <div className={cn("h-full w-full rounded-xl border border-white/20 bg-gradient-to-br p-4 flex items-end", item.bg)}>
-                  <p className="text-white text-xl font-bold leading-tight drop-shadow">{item.name}</p>
-                </div>
-                <div className="absolute inset-0 bg-[#020617]/70 opacity-0 group-hover:opacity-100 transition-opacity grid place-items-center p-4">
-                  <div className="w-full max-w-[210px] space-y-2">
-                    <Button className="w-full bg-[#0d9488] hover:bg-[#0f766e] text-white" onClick={() => onUseTemplate(templateCategoryToComposeTemplate[item.category])}>
-                      Use Template
-                    </Button>
-                    <Button variant="outline" className="w-full border-white/40 text-white hover:bg-white/10">
-                      Edit
-                    </Button>
+      {loading && (
+        <div className="text-center py-16 text-muted-foreground text-sm">Loading templates…</div>
+      )}
+
+      {!loading && templates.length === 0 && (
+        <div className="flex flex-col items-center justify-center py-20 gap-4 text-center">
+          <div className="w-16 h-16 rounded-full bg-[#0d9488]/10 flex items-center justify-center">
+            <FileText className="h-8 w-8 text-[#0d9488]" />
+          </div>
+          <div>
+            <p className="font-semibold text-lg">No templates yet</p>
+            <p className="text-muted-foreground text-sm mt-1">Create your first template to get started</p>
+          </div>
+          <Button className="bg-[#0d9488] hover:bg-[#0f766e] text-white gap-2 mt-2" onClick={openNew}>
+            <Plus className="h-4 w-4" />
+            New Template
+          </Button>
+        </div>
+      )}
+
+      {!loading && filteredTemplates.length > 0 && (
+        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+          {filteredTemplates.map((item) => (
+            <motion.div key={item.name} whileHover={{ y: -2 }} className="group">
+              <Card className="overflow-hidden rounded-2xl border border-white/10 bg-white/95 dark:bg-[#081328]">
+                <div className="relative p-3 bg-gradient-to-br from-slate-900/80 to-slate-950/95">
+                  <TemplatePreview html={item.html || ""} title={item.name} />
+                  <div className="absolute inset-0 bg-[#020617]/70 opacity-0 group-hover:opacity-100 transition-opacity grid place-items-center p-4">
+                    <div className="w-full max-w-[210px] space-y-2">
+                      <Button
+                        className="w-full bg-[#0d9488] hover:bg-[#0f766e] text-white"
+                        onClick={() => onUseTemplate("News")}
+                      >
+                        Use Template
+                      </Button>
+                      <Button variant="outline" className="w-full border-white/40 text-white hover:bg-white/10" onClick={() => openEdit(item)}>
+                        Edit
+                      </Button>
+                      <Button variant="outline" className="w-full border-red-400/40 text-red-400 hover:bg-red-500/10" onClick={() => deleteTemplate(item)}>
+                        Delete
+                      </Button>
+                    </div>
                   </div>
                 </div>
-              </div>
 
-              <div className="p-4">
-                <p className="font-semibold text-base">{item.name}</p>
-                <div className="flex items-center justify-between mt-2">
-                  <Badge className="border" style={{ borderColor: item.accent, color: item.accent }}>
-                    {item.category}
-                  </Badge>
-                  <p className="text-xs text-muted-foreground">Used {item.usedCount} times</p>
+                <div className="p-4">
+                  <p className="font-semibold text-base">{item.name}</p>
                 </div>
-              </div>
-            </Card>
-          </motion.div>
-        ))}
-      </div>
+              </Card>
+            </motion.div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
