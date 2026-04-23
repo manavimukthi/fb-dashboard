@@ -636,7 +636,7 @@ function SyncProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   const syncPagesFromGoogleSheet = React.useCallback(async () => {
-    const endpoints = ["/api/page-data?action=read"];
+    const endpoints = ["https://script.google.com/macros/s/AKfycbz5HtEOSeVhzjnPXEVistZ6jcrXogHL7V1jLk_zGKo5CCDMl5aVcGyIGhRCviVNfEI/exec?action=getAll"];
 
     for (const endpoint of endpoints) {
       try {
@@ -997,13 +997,15 @@ function SyncProvider({ children }: { children: React.ReactNode }) {
     setFailedAttempts((prev) => prev + 1);
   }, [automations, pages, queue, syncPageMetricsFromFacebook, syncPagesFromGoogleSheet, syncRecentPostsFromFacebook, webhook]);
 
+  const syncNowRef = React.useRef(syncNow);
+  React.useEffect(() => { syncNowRef.current = syncNow; });
+
+  // Stable interval — empty deps prevents re-triggering on every pages/syncNow change
   React.useEffect(() => {
-    void syncNow();
-    const timer = setInterval(() => {
-      void syncNow();
-    }, 30000);
+    void syncNowRef.current();
+    const timer = setInterval(() => void syncNowRef.current(), 30_000);
     return () => clearInterval(timer);
-  }, [syncNow]);
+  }, []);
 
   const value: SyncContextValue = {
     syncData: { queue, pages, automations, lastUpdated },
@@ -3100,10 +3102,15 @@ function PageAnalyticsPage() {
           ? "bg-rose-500/15 text-rose-300 border-rose-500/35"
           : "bg-slate-500/15 text-slate-300 border-slate-500/35";
 
-  const lastSyncedLabel =
-    lastSyncedAt === null
-      ? "Not synced yet"
-      : `${Math.max(0, Math.floor((Date.now() - lastSyncedAt) / 1000))}s ago`;
+  const lastSyncedLabel = React.useMemo(() => {
+    if (lastSyncedAt === null) return "Not synced yet";
+    const secs = Math.max(0, Math.floor((Date.now() - lastSyncedAt) / 1000));
+    if (secs < 60) return `${secs}s ago`;
+    if (secs < 3600) return `${Math.floor(secs / 60)}m ago`;
+    return `${Math.floor(secs / 3600)}h ago`;
+  // re-compute every render (parent ticks every 1 s)
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [lastSyncedAt, syncStatus]);
 
   const metricCards = [
     { label: "Followers", value: followersDisplay, icon: Users, meta: followersNumber > 0 ? "Live" : "No data", progress: Math.min(100, Math.round(followersNumber / 500)) },
