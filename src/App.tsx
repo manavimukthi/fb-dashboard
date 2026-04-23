@@ -2392,7 +2392,7 @@ function MyPagesPage() {
     pages?: StoredPageRecord[];
   };
 
-  const { syncData, setPages } = useSync();
+  const { syncData, setPages, syncNow } = useSync();
   const [showForm, setShowForm] = React.useState(false);
   const [isSubmitting, setIsSubmitting] = React.useState(false);
   const [isFetching, setIsFetching] = React.useState(false);
@@ -2404,64 +2404,11 @@ function MyPagesPage() {
 
   const APPS_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbz5HtEOSeVhzjnPXEVistZ6jcrXogHL7V1jLk_zGKo5CCDMl5aVcGyIGhRCviVNfEI/exec";
 
-  type AppsScriptRow = {
-    page_id: string;
-    page_name: string;
-    access_token: string;
-    status: string;
-    added_date?: string;
-  };
-
-  const stableNumId = (s: string): number => {
-    let h = 0;
-    for (let i = 0; i < s.length; i++) h = (Math.imul(31, h) + s.charCodeAt(i)) | 0;
-    return Math.abs(h) || 1;
-  };
-
-  const appsScriptToManagedPages = React.useCallback((rows: AppsScriptRow[]): ManagedPage[] => {
-    const colors = ["bg-rose-500", "bg-blue-500", "bg-orange-500", "bg-purple-500", "bg-amber-500", "bg-teal-500"];
-    return rows
-      .filter((r) => r.page_id || r.page_name)
-      .map((r, index) => ({
-        id: stableNumId(r.page_id || r.page_name),
-        name: r.page_name || `Page ${r.page_id}`,
-        handle: r.page_name ? `@${r.page_name.toLowerCase().replace(/\s+/g, "")}` : "",
-        pageId: r.page_id,
-        accessToken: r.access_token,
-        status: (r.status || "").toLowerCase() === "paused" ? ("Paused" as PageStatus) : ("Active" as PageStatus),
-        color: colors[index % colors.length],
-        postsToday: 0,
-        reach: "0",
-        followers: "0",
-      }));
-  }, []);
-
-  const fetchAndSetPages = React.useCallback(async () => {
-    try {
-      const res = await fetch(`${APPS_SCRIPT_URL}?action=getAll`, { cache: "no-store" });
-      if (!res.ok) return;
-      const rows = await res.json() as AppsScriptRow[];
-      if (Array.isArray(rows)) setPages(appsScriptToManagedPages(rows));
-    } catch {
-      // keep current state on network error
-    }
-  }, [appsScriptToManagedPages, setPages]);
-
   const pushSubmissionLog = React.useCallback((entry: PageStorageSubmission) => {
     setSubmissionLog((prev) => {
       return [entry, ...prev].slice(0, 20);
     });
   }, []);
-
-  React.useEffect(() => {
-    void fetchAndSetPages();
-  }, [fetchAndSetPages]);
-
-  // Poll every 30 s to stay in sync with Google Sheet
-  React.useEffect(() => {
-    const id = setInterval(() => void fetchAndSetPages(), 30_000);
-    return () => clearInterval(id);
-  }, [fetchAndSetPages]);
 
   React.useEffect(() => {
     if (!toast) return;
@@ -2521,7 +2468,7 @@ function MyPagesPage() {
       setToast({ type: "success", message: "Account deleted from Google Sheet." });
       // brief pause so Apps Script has time to commit the delete
       await new Promise<void>((r) => setTimeout(r, 1200));
-      await fetchAndSetPages();
+      await syncNow();
     } catch {
       setToast({ type: "error", message: "Delete request failed." });
       setPages((prev) => prev.filter((p) => p.id !== id));
@@ -2598,7 +2545,7 @@ function MyPagesPage() {
       setToast({ type: "success", message: "Account saved to Google Sheet." });
       // brief pause so Apps Script has time to commit the row
       await new Promise<void>((r) => setTimeout(r, 1200));
-      await fetchAndSetPages();
+      await syncNow();
     } catch {
       setToast({ type: "error", message: "Could not save to Google Sheet." });
     } finally {
