@@ -19,18 +19,20 @@ VITE_N8N_PAGE_WEBHOOK_URL=https://n8n.kasunmadhuwantha.cv/webhook-test/page-data
 VITE_VERIFY_WEBHOOK_URL=https://n8n.kasunmadhuwantha.cv/webhook/verify
 ```
 
-My Pages webhook flow:
+My Pages local file flow:
 
-- Frontend sends page registration data to `/api/page-data` (Vite middleware proxy).
-- Middleware forwards to `https://n8n.kasunmadhuwantha.cv/webhook-test/page-data`.
-- If middleware is unavailable, app falls back to `VITE_N8N_PAGE_WEBHOOK_URL`.
-- Submission history is cached in localStorage key `page-webhook-submissions`.
+- Frontend sends create/update/delete page data to `/api/page-data`.
+- Vite local middleware stores all pages in `data/page-data.json`.
+- Middleware also mirrors page records in `.env.local` under `FB_DASHBOARD_PAGES`.
+- Deleting a page removes it from both file stores.
+- Submission history is cached in localStorage key `page-storage-submissions`.
 
 The automation page uses:
 
 - `GET https://n8n.kasunmadhuwantha.cv/api/v1/workflows`
 - `POST https://n8n.kasunmadhuwantha.cv/api/v1/workflows/{id}/activate`
 - `POST https://n8n.kasunmadhuwantha.cv/api/v1/workflows/{id}/deactivate`
+
 ## Build
 
 ```bash

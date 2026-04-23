@@ -2023,7 +2023,7 @@ function TemplatesPage({ onUseTemplate }: { onUseTemplate: (template: TemplateNa
 function MyPagesPage() {
   type PageAction = "create" | "update" | "delete";
 
-  type PageWebhookSubmission = {
+  type PageStorageSubmission = {
     id: number;
     sentAt: string;
     ok: boolean;
@@ -2040,6 +2040,22 @@ function MyPagesPage() {
     };
   };
 
+  type StoredPageRecord = {
+    displayName: string;
+    handle: string;
+    pageId: string;
+    accessToken: string;
+    followers?: string;
+    reach?: string;
+    status?: PageStatus;
+  };
+
+  type PageStorageApiResponse = {
+    ok: boolean;
+    message?: string;
+    pages?: StoredPageRecord[];
+  };
+
   const { syncData, setPages } = useSync();
   const [showForm, setShowForm] = React.useState(false);
   const [isSubmitting, setIsSubmitting] = React.useState(false);
@@ -2048,11 +2064,11 @@ function MyPagesPage() {
   const [form, setForm] = React.useState({ displayName: "", handle: "", pageId: "", accessToken: "" });
   const [fetchedData, setFetchedData] = React.useState<{ name: string; username: string; followers: string; reach: string } | null>(null);
   const [fetchError, setFetchError] = React.useState<string | null>(null);
-  const [submissionLog, setSubmissionLog] = React.useState<PageWebhookSubmission[]>(() => {
+  const [submissionLog, setSubmissionLog] = React.useState<PageStorageSubmission[]>(() => {
     try {
-      const raw = localStorage.getItem("page-webhook-submissions");
+      const raw = localStorage.getItem("page-storage-submissions");
       if (!raw) return [];
-      const parsed = JSON.parse(raw) as PageWebhookSubmission[];
+      const parsed = JSON.parse(raw) as PageStorageSubmission[];
       return Array.isArray(parsed) ? parsed : [];
     } catch {
       return [];
@@ -2060,70 +2076,70 @@ function MyPagesPage() {
   });
 
   const pageMiddlewareUrl = "/api/page-data";
-  const fallbackPageWebhookUrl = import.meta.env.VITE_N8N_PAGE_WEBHOOK_URL || import.meta.env.VITE_N8N_WEBHOOK_URL;
+  const toManagedPages = React.useCallback((records: StoredPageRecord[]): ManagedPage[] => {
+    const colors = ["bg-rose-500", "bg-blue-500", "bg-orange-500", "bg-purple-500", "bg-amber-500", "bg-teal-500"];
+    return records.map((record, index) => ({
+      id: Date.now() + index,
+      name: record.displayName,
+      handle: record.handle,
+      pageId: record.pageId,
+      accessToken: record.accessToken,
+      status: record.status === "Paused" ? "Paused" : "Active",
+      color: colors[index % colors.length],
+      postsToday: 0,
+      reach: record.reach || "0",
+      followers: record.followers || "0",
+    }));
+  }, []);
 
-  const parseWebhookResponseMessage = (raw: string): string => {
-    const trimmed = raw.trim();
-    if (!trimmed) return "";
+  const postPageStorage = async (action: PageAction, payload: Record<string, unknown>) => {
     try {
-      const parsed = JSON.parse(trimmed) as { message?: unknown; data?: { message?: unknown } };
-      if (typeof parsed.message === "string" && parsed.message.trim()) return parsed.message.trim();
-      if (parsed.data && typeof parsed.data.message === "string" && parsed.data.message.trim()) return parsed.data.message.trim();
-    } catch {
-      // Keep plain-text response when body is not JSON.
-    }
-    return trimmed;
-  };
-
-  const postPageWebhook = async (action: PageAction, payload: Record<string, unknown>) => {
-    let ok = false;
-    let error = "";
-    let responseMessage = "";
-
-    try {
-      const middlewareResponse = await fetch(pageMiddlewareUrl, {
+      const response = await fetch(pageMiddlewareUrl, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ action, ...payload }),
       });
-      const raw = await middlewareResponse.text();
-      responseMessage = parseWebhookResponseMessage(raw);
-      ok = middlewareResponse.ok;
-      if (!ok) {
-        error = `Middleware request failed (${middlewareResponse.status}).`;
-      }
+
+      const json = (await response.json()) as PageStorageApiResponse;
+      return {
+        ok: response.ok && Boolean(json.ok),
+        error: response.ok ? "" : json.message || `Storage request failed (${response.status}).`,
+        responseMessage: json.message || "",
+        pages: Array.isArray(json.pages) ? json.pages : undefined,
+      };
     } catch {
-      error = "Middleware request failed.";
+      return {
+        ok: false,
+        error: "Local file storage request failed.",
+        responseMessage: "",
+        pages: undefined,
+      };
     }
-
-    if (!ok && fallbackPageWebhookUrl) {
-      try {
-        const directResponse = await fetch(fallbackPageWebhookUrl, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ action, ...payload }),
-        });
-        const raw = await directResponse.text();
-        responseMessage = parseWebhookResponseMessage(raw);
-        ok = directResponse.ok;
-        if (!ok) {
-          error = `Fallback webhook failed (${directResponse.status}).`;
-        }
-      } catch {
-        error = "Fallback webhook request failed.";
-      }
-    }
-
-    return { ok, error, responseMessage };
   };
 
-  const pushSubmissionLog = React.useCallback((entry: PageWebhookSubmission) => {
+  const pushSubmissionLog = React.useCallback((entry: PageStorageSubmission) => {
     setSubmissionLog((prev) => {
       const next = [entry, ...prev].slice(0, 20);
-      localStorage.setItem("page-webhook-submissions", JSON.stringify(next));
+      localStorage.setItem("page-storage-submissions", JSON.stringify(next));
       return next;
     });
   }, []);
+
+  React.useEffect(() => {
+    const loadSavedPages = async () => {
+      try {
+        const response = await fetch(pageMiddlewareUrl, { method: "GET", cache: "no-store" });
+        if (!response.ok) return;
+        const json = (await response.json()) as PageStorageApiResponse;
+        if (!json.ok || !Array.isArray(json.pages)) return;
+        setPages(toManagedPages(json.pages));
+      } catch {
+        // Keep local state when storage endpoint is unavailable.
+      }
+    };
+
+    void loadSavedPages();
+  }, [setPages, toManagedPages]);
 
   React.useEffect(() => {
     if (!toast) return;
@@ -2159,7 +2175,7 @@ function MyPagesPage() {
     const handle = page?.handle ?? "";
     const pageId = page?.pageId ?? "";
 
-    const webhookResult = await postPageWebhook("delete", {
+    const storageResult = await postPageStorage("delete", {
       displayName,
       handle,
       pageId,
@@ -2168,9 +2184,9 @@ function MyPagesPage() {
     pushSubmissionLog({
       id: Date.now(),
       sentAt: new Date().toISOString(),
-      ok: webhookResult.ok,
+      ok: storageResult.ok,
       action: "delete",
-      responseMessage: webhookResult.responseMessage,
+      responseMessage: storageResult.responseMessage,
       payload: {
         displayName,
         handle,
@@ -2178,12 +2194,16 @@ function MyPagesPage() {
       },
     });
 
-    setPages((prev) => prev.filter((page) => page.id !== id));
-
-    if (webhookResult.ok) {
-      setToast({ type: "success", message: "Account deleted and webhook notified." });
+    if (storageResult.pages) {
+      setPages(toManagedPages(storageResult.pages));
     } else {
-      setToast({ type: "error", message: webhookResult.error || "Delete webhook failed. Action cached locally." });
+      setPages((prev) => prev.filter((page) => page.id !== id));
+    }
+
+    if (storageResult.ok) {
+      setToast({ type: "success", message: "Account deleted from local file storage." });
+    } else {
+      setToast({ type: "error", message: storageResult.error || "Delete request failed." });
     }
   };
 
@@ -2248,14 +2268,14 @@ function MyPagesPage() {
         reach: fetchedData?.reach,
       };
 
-      const webhookResult = await postPageWebhook(action, webhookPayload);
+      const storageResult = await postPageStorage(action, webhookPayload);
 
       pushSubmissionLog({
         id: Date.now(),
         sentAt: new Date().toISOString(),
-        ok: webhookResult.ok,
+        ok: storageResult.ok,
         action,
-        responseMessage: webhookResult.responseMessage,
+        responseMessage: storageResult.responseMessage,
         payload: {
           displayName: webhookPayload.displayName,
           handle: webhookPayload.handle,
@@ -2267,54 +2287,58 @@ function MyPagesPage() {
         },
       });
 
-      if (!webhookResult.ok) {
-        setToast({ type: "error", message: webhookResult.error || "Webhook request failed. Data kept in local cache." });
+      if (!storageResult.ok) {
+        setToast({ type: "error", message: storageResult.error || "Could not save to local file storage." });
       }
 
       const colors = ["bg-rose-500", "bg-blue-500", "bg-orange-500", "bg-purple-500", "bg-amber-500", "bg-teal-500"];
-      setPages((prev) => {
-        if (existingPage) {
-          return prev.map((page) =>
-            page.id === existingPage.id
-              ? {
-                  ...page,
-                  name: form.displayName.trim(),
-                  handle: normalizedHandle,
-                  pageId: webhookPayload.pageId,
-                  accessToken: webhookPayload.accessToken,
-                  reach: fetchedData?.reach ?? page.reach,
-                  followers: fetchedData?.followers ?? page.followers,
-                }
-              : page
-          );
-        }
+      if (storageResult.pages) {
+        setPages(toManagedPages(storageResult.pages));
+      } else {
+        setPages((prev) => {
+          if (existingPage) {
+            return prev.map((page) =>
+              page.id === existingPage.id
+                ? {
+                    ...page,
+                    name: form.displayName.trim(),
+                    handle: normalizedHandle,
+                    pageId: webhookPayload.pageId,
+                    accessToken: webhookPayload.accessToken,
+                    reach: fetchedData?.reach ?? page.reach,
+                    followers: fetchedData?.followers ?? page.followers,
+                  }
+                : page
+            );
+          }
 
-        return [
-          {
-            id: Date.now(),
-            name: form.displayName.trim(),
-            handle: normalizedHandle,
-            pageId: webhookPayload.pageId,
-            accessToken: webhookPayload.accessToken,
-            status: "Active",
-            color: colors[prev.length % colors.length],
-            postsToday: 0,
-            reach: fetchedData?.reach ?? "0",
-            followers: fetchedData?.followers ?? "0",
-          },
-          ...prev,
-        ];
-      });
+          return [
+            {
+              id: Date.now(),
+              name: form.displayName.trim(),
+              handle: normalizedHandle,
+              pageId: webhookPayload.pageId,
+              accessToken: webhookPayload.accessToken,
+              status: "Active",
+              color: colors[prev.length % colors.length],
+              postsToday: 0,
+              reach: fetchedData?.reach ?? "0",
+              followers: fetchedData?.followers ?? "0",
+            },
+            ...prev,
+          ];
+        });
+      }
 
-      const responseWantsUpdate = /update|updated|already\s+exist/i.test(webhookResult.responseMessage);
+      const responseWantsUpdate = /update|updated|already\s+exist/i.test(storageResult.responseMessage);
       setForm({ displayName: "", handle: "", pageId: "", accessToken: "" });
       setFetchedData(null);
       setShowForm(false);
-      if (webhookResult.ok) {
+      if (storageResult.ok) {
         if (action === "update" || responseWantsUpdate) {
-          setToast({ type: "success", message: "Account updated and webhook notified." });
+          setToast({ type: "success", message: "Account updated in local file storage." });
         } else {
-          setToast({ type: "success", message: "Account created and sent to webhook successfully!" });
+          setToast({ type: "success", message: "Account saved to local file storage." });
         }
       }
     } catch {
@@ -2484,14 +2508,14 @@ function MyPagesPage() {
 
       <Card className="rounded-2xl border border-white/10 bg-white/95 dark:bg-[#081328] p-4 space-y-3">
         <div className="flex items-center justify-between gap-3">
-          <h3 className="font-semibold">Webhook Storage</h3>
+          <h3 className="font-semibold">File Storage</h3>
           <Badge className="border border-white/20 bg-white/5 text-xs text-muted-foreground">
             {submissionLog.length} stored
           </Badge>
         </div>
 
         {submissionLog.length === 0 ? (
-          <p className="text-sm text-muted-foreground">No webhook submissions stored yet.</p>
+          <p className="text-sm text-muted-foreground">No file storage actions recorded yet.</p>
         ) : (
           <div className="space-y-2">
             {submissionLog.slice(0, 5).map((entry) => (
@@ -2503,7 +2527,7 @@ function MyPagesPage() {
                   </Badge>
                 </div>
                 <p className="text-xs text-muted-foreground truncate">Page ID: {entry.payload.pageId || "-"}</p>
-                {entry.responseMessage && <p className="text-xs text-muted-foreground truncate">Webhook: {entry.responseMessage}</p>}
+                {entry.responseMessage && <p className="text-xs text-muted-foreground truncate">Storage: {entry.responseMessage}</p>}
                 <p className="text-xs text-muted-foreground">{new Date(entry.sentAt).toLocaleString()}</p>
               </div>
             ))}
