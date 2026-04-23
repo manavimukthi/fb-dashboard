@@ -13,6 +13,7 @@ interface ImportMetaEnv {
 	readonly VITE_GSHEET_URL?: string;
 	readonly VITE_GSHEET_WEB_APP_URL?: string;
 	readonly VITE_GSHEET_API_URL?: string;
+	readonly VITE_PAGES_SHEET_WEB_APP_URL?: string;
 }
 
 interface ImportMeta {

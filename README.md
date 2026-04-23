@@ -19,12 +19,12 @@ VITE_N8N_PAGE_WEBHOOK_URL=https://n8n.kasunmadhuwantha.cv/webhook-test/page-data
 VITE_VERIFY_WEBHOOK_URL=https://n8n.kasunmadhuwantha.cv/webhook/verify
 ```
 
-My Pages local file flow:
+My Pages Google Sheet flow:
 
 - Frontend sends create/update/delete page data to `/api/page-data`.
-- Vite local middleware stores all pages in `data/page-data.json`.
-- Middleware also mirrors page records in `.env.local` under `FB_DASHBOARD_PAGES`.
-- Deleting a page removes it from both file stores.
+- Hosted function `functions/api/page-data.js` writes directly to your Google Apps Script web app.
+- Hosted function reads latest sheet rows after each write and returns canonical page data to the dashboard.
+- Dashboard polls `/api/page-data?action=read&sheet=Sheet1` to keep pages synced.
 - Submission history is cached in localStorage key `page-storage-submissions`.
 
 The automation page uses:

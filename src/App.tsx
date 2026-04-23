@@ -449,7 +449,7 @@ const defaultConnections: ConnectionsConfig = {
 };
 
 const DEFAULT_N8N_API_BASE_URL = "https://n8n.kasunmadhuwantha.cv/api/v1";
-const DEFAULT_GSHEET_WEB_APP_URL = "https://script.google.com/macros/s/AKfycbwkTvlhXmTehCJEfJ_ts-w85sDzA4xVNlMpgoyCSAJzKEH6uLwTk7APMGMQ5lEng3FX/exec";
+const DEFAULT_GSHEET_WEB_APP_URL = "https://script.google.com/macros/s/AKfycbxY-ISB9twG0GldEtDNLu_f_dWHv-KmsMXAY9hSht1Vc-6ahTtjBJSWfDWO3UPyqncY/exec";
 const CONNECTIONS_CONFIG_UPDATED_EVENT = "connections-config-updated";
 
 const getSavedConnectionsConfig = (): Partial<ConnectionsConfig> => {
@@ -646,12 +646,11 @@ function SyncProvider({ children }: { children: React.ReactNode }) {
   const syncPagesFromGoogleSheet = React.useCallback(async () => {
     const endpoints = import.meta.env.DEV
       ? [
-          "/gsheet-api",
-          "/gsheet-api?action=list",
-          "/gsheet-api?format=json",
+          "/api/page-data?action=read&sheet=Sheet1",
+          "/gsheet-api?action=read&sheet=Sheet1",
           sheetUrl,
         ]
-      : [sheetUrl];
+      : ["/api/page-data?action=read&sheet=Sheet1", sheetUrl];
 
     for (const endpoint of endpoints) {
       try {
@@ -2076,6 +2075,19 @@ function MyPagesPage() {
   });
 
   const pageMiddlewareUrl = "/api/page-data";
+  const parsePageStorageResponse = (raw: string): PageStorageApiResponse => {
+    const trimmed = raw.trim();
+    if (!trimmed) {
+      return { ok: false, message: "Empty response from page storage API." };
+    }
+
+    try {
+      return JSON.parse(trimmed) as PageStorageApiResponse;
+    } catch {
+      return { ok: false, message: trimmed.slice(0, 180) };
+    }
+  };
+
   const toManagedPages = React.useCallback((records: StoredPageRecord[]): ManagedPage[] => {
     const colors = ["bg-rose-500", "bg-blue-500", "bg-orange-500", "bg-purple-500", "bg-amber-500", "bg-teal-500"];
     return records.map((record, index) => ({
@@ -2100,7 +2112,8 @@ function MyPagesPage() {
         body: JSON.stringify({ action, ...payload }),
       });
 
-      const json = (await response.json()) as PageStorageApiResponse;
+      const raw = await response.text();
+      const json = parsePageStorageResponse(raw);
       return {
         ok: response.ok && Boolean(json.ok),
         error: response.ok ? "" : json.message || `Storage request failed (${response.status}).`,
@@ -2110,7 +2123,7 @@ function MyPagesPage() {
     } catch {
       return {
         ok: false,
-        error: "Local file storage request failed.",
+        error: "Hosted page storage request failed.",
         responseMessage: "",
         pages: undefined,
       };
@@ -2128,9 +2141,10 @@ function MyPagesPage() {
   React.useEffect(() => {
     const loadSavedPages = async () => {
       try {
-        const response = await fetch(pageMiddlewareUrl, { method: "GET", cache: "no-store" });
+        const response = await fetch(`${pageMiddlewareUrl}?action=read&sheet=Sheet1`, { method: "GET", cache: "no-store" });
         if (!response.ok) return;
-        const json = (await response.json()) as PageStorageApiResponse;
+        const raw = await response.text();
+        const json = parsePageStorageResponse(raw);
         if (!json.ok || !Array.isArray(json.pages)) return;
         setPages(toManagedPages(json.pages));
       } catch {
@@ -2201,7 +2215,7 @@ function MyPagesPage() {
     }
 
     if (storageResult.ok) {
-      setToast({ type: "success", message: "Account deleted from local file storage." });
+      setToast({ type: "success", message: "Account deleted from Google Sheet." });
     } else {
       setToast({ type: "error", message: storageResult.error || "Delete request failed." });
     }
@@ -2288,7 +2302,7 @@ function MyPagesPage() {
       });
 
       if (!storageResult.ok) {
-        setToast({ type: "error", message: storageResult.error || "Could not save to local file storage." });
+        setToast({ type: "error", message: storageResult.error || "Could not save to Google Sheet." });
       }
 
       const colors = ["bg-rose-500", "bg-blue-500", "bg-orange-500", "bg-purple-500", "bg-amber-500", "bg-teal-500"];
@@ -2336,9 +2350,9 @@ function MyPagesPage() {
       setShowForm(false);
       if (storageResult.ok) {
         if (action === "update" || responseWantsUpdate) {
-          setToast({ type: "success", message: "Account updated in local file storage." });
+          setToast({ type: "success", message: "Account updated in Google Sheet." });
         } else {
-          setToast({ type: "success", message: "Account saved to local file storage." });
+          setToast({ type: "success", message: "Account saved to Google Sheet." });
         }
       }
     } catch {
@@ -2508,14 +2522,14 @@ function MyPagesPage() {
 
       <Card className="rounded-2xl border border-white/10 bg-white/95 dark:bg-[#081328] p-4 space-y-3">
         <div className="flex items-center justify-between gap-3">
-          <h3 className="font-semibold">File Storage</h3>
+          <h3 className="font-semibold">Google Sheet Storage</h3>
           <Badge className="border border-white/20 bg-white/5 text-xs text-muted-foreground">
             {submissionLog.length} stored
           </Badge>
         </div>
 
         {submissionLog.length === 0 ? (
-          <p className="text-sm text-muted-foreground">No file storage actions recorded yet.</p>
+          <p className="text-sm text-muted-foreground">No Google Sheet storage actions recorded yet.</p>
         ) : (
           <div className="space-y-2">
             {submissionLog.slice(0, 5).map((entry) => (
