@@ -1707,229 +1707,347 @@ function PostMonitorPage() {
   );
 }
 
+function MediaUploadSlot({
+  label, accept, icon, preview, onChange,
+}: {
+  label: string;
+  accept: string;
+  icon: React.ReactNode;
+  preview: string | null;
+  onChange: (file: File | null, preview: string | null) => void;
+}) {
+  const inputRef = React.useRef<HTMLInputElement>(null);
+  const isImage = accept.startsWith("image");
+  const isAudio = accept.startsWith("audio");
+  const isVideo = accept.startsWith("video");
+
+  const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0] ?? null;
+    if (!file) { onChange(null, null); return; }
+    const url = URL.createObjectURL(file);
+    onChange(file, url);
+  };
+
+  return (
+    <div
+      className="relative rounded-xl border-2 border-dashed border-border hover:border-[#0d9488]/60 transition-colors cursor-pointer overflow-hidden bg-background/40"
+      style={{ aspectRatio: isVideo ? "16/9" : isAudio ? undefined : "1/1" }}
+      onClick={() => inputRef.current?.click()}
+    >
+      <input ref={inputRef} type="file" accept={accept} className="hidden" onChange={handleChange} />
+
+      {preview && isImage && (
+        <img src={preview} alt={label} className="absolute inset-0 w-full h-full object-cover" />
+      )}
+      {preview && isVideo && (
+        <video src={preview} className="absolute inset-0 w-full h-full object-cover" muted />
+      )}
+      {preview && isAudio && (
+        <div className="p-3">
+          <audio src={preview} controls className="w-full" />
+        </div>
+      )}
+
+      {!preview && (
+        <div className="flex flex-col items-center justify-center gap-2 p-4 h-full min-h-[80px] text-muted-foreground">
+          {icon}
+          <span className="text-xs font-medium text-center">{label}</span>
+        </div>
+      )}
+
+      {preview && !isAudio && (
+        <button
+          type="button"
+          onClick={(e) => { e.stopPropagation(); onChange(null, null); if (inputRef.current) inputRef.current.value = ""; }}
+          className="absolute top-1.5 right-1.5 h-6 w-6 rounded-full bg-black/60 text-white flex items-center justify-center hover:bg-black/80"
+        >
+          <X className="h-3 w-3" />
+        </button>
+      )}
+    </div>
+  );
+}
+
 function ComposePostPage({ initialTemplate }: { initialTemplate?: TemplateName }) {
+  const SCRIPT_URL = "https://script.google.com/macros/s/AKfycbwuZP1ETiVjr0_LCirp-sY1vLVXJ8p4P-3_z1grHxULRN-k2PuwqLlSxDpgqglo6Qf7Hw/exec";
+
   const [selectedPage, setSelectedPage] = React.useState("");
-  const [selectedTemplate, setSelectedTemplate] = React.useState<TemplateName>(initialTemplate ?? "Breaking");
+  const [selectedTemplateObj, setSelectedTemplateObj] = React.useState<{ name: string; html: string } | null>(null);
+  const [sheetTemplates, setSheetTemplates] = React.useState<Array<{ name: string; html: string }>>([]);
   const [headline, setHeadline] = React.useState("");
   const [caption, setCaption] = React.useState("");
-  const [scheduleTime, setScheduleTime] = React.useState("");
   const [isSubmitting, setIsSubmitting] = React.useState(false);
+  const [isMediaSubmitting, setIsMediaSubmitting] = React.useState(false);
   const [toast, setToast] = React.useState<{ type: "success" | "error"; message: string } | null>(null);
+
+  const [activeTab, setActiveTab] = React.useState<"post" | "media">("post");
+
+  // Media state — 5 images + audio (no video)
+  const [images, setImages] = React.useState<Array<{ file: File | null; preview: string | null }>>([
+    { file: null, preview: null },
+    { file: null, preview: null },
+    { file: null, preview: null },
+    { file: null, preview: null },
+    { file: null, preview: null },
+  ]);
+  const [audio, setAudio] = React.useState<{ file: File | null; preview: string | null }>({ file: null, preview: null });
+
   const { setQueue, syncData } = useSync();
   const previousPagesRef = React.useRef<string[]>([]);
+  const webhookUrl = import.meta.env.VITE_N8N_WEBHOOK_URL as string | undefined;
 
   const pages = React.useMemo(() => {
     const dynamicPages = syncData.pages
       .map((page) => page.name.trim())
       .filter((name, index, arr) => name.length > 0 && arr.indexOf(name) === index);
-    if (dynamicPages.length > 0) return dynamicPages;
-    return ["TrendWire Daily", "Civic Pulse", "Science Snap"];
+    return dynamicPages.length > 0 ? dynamicPages : ["TrendWire Daily", "Civic Pulse", "Science Snap"];
   }, [syncData.pages]);
-  const templates: TemplateName[] = ["Breaking", "News", "Fact", "Opinion", "Weekly Recap"];
-  const webhookUrl = import.meta.env.VITE_N8N_WEBHOOK_URL;
+
+  React.useEffect(() => {
+    fetch(`${SCRIPT_URL}?action=getTemplates`, { cache: "no-store" })
+      .then((r) => r.json())
+      .then((rows: Array<Record<string, string>>) => {
+        if (Array.isArray(rows)) {
+          setSheetTemplates(rows.filter((r) => r["Template Name"]).map((r) => ({ name: r["Template Name"], html: r["Template_code"] || "" })));
+        }
+      })
+      .catch(() => {});
+  }, [SCRIPT_URL]);
 
   React.useEffect(() => {
     if (!toast) return;
-    const timer = setTimeout(() => setToast(null), 2800);
-    return () => clearTimeout(timer);
+    const t = setTimeout(() => setToast(null), 2800);
+    return () => clearTimeout(t);
   }, [toast]);
 
   React.useEffect(() => {
-    if (initialTemplate) setSelectedTemplate(initialTemplate);
-  }, [initialTemplate]);
-
-  React.useEffect(() => {
-    if (pages.length === 0) {
-      previousPagesRef.current = [];
-      setSelectedPage("");
-      return;
-    }
-
-    const previousPages = previousPagesRef.current;
-    const addedPages = pages.filter((page) => !previousPages.includes(page));
-
-    if (addedPages.length > 0) {
-      setSelectedPage(addedPages[0]);
-    } else if (!selectedPage || !pages.includes(selectedPage)) {
-      setSelectedPage(pages[0]);
-    }
-
+    if (pages.length === 0) { previousPagesRef.current = []; setSelectedPage(""); return; }
+    const prev = previousPagesRef.current;
+    const added = pages.filter((p) => !prev.includes(p));
+    if (added.length > 0) setSelectedPage(added[0]);
+    else if (!selectedPage || !pages.includes(selectedPage)) setSelectedPage(pages[0]);
     previousPagesRef.current = pages;
   }, [pages, selectedPage]);
 
-  const submitToQueue = async () => {
-    if (!selectedPage) {
-      setToast({ type: "error", message: "Please select a page first." });
-      return;
-    }
-
-    if (!headline.trim()) {
-      setToast({ type: "error", message: "Headline is required." });
-      return;
-    }
-    if (!caption.trim()) {
-      setToast({ type: "error", message: "Caption is required." });
-      return;
-    }
-
+  const submitPost = async () => {
+    if (!selectedPage) { setToast({ type: "error", message: "Please select a page first." }); return; }
+    if (!headline.trim()) { setToast({ type: "error", message: "Headline is required." }); return; }
+    if (!caption.trim()) { setToast({ type: "error", message: "Caption is required." }); return; }
     setIsSubmitting(true);
     try {
-      const payload = { page: selectedPage, template: selectedTemplate, headline: headline.trim(), caption: caption.trim(), scheduledTime: scheduleTime || null };
+      const payload = { page: selectedPage, template: selectedTemplateObj?.name ?? "", headline: headline.trim(), caption: caption.trim() };
       if (webhookUrl) {
-        const response = await fetch(webhookUrl, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(payload),
-        });
-        if (!response.ok) throw new Error("Webhook request failed");
+        const res = await fetch(webhookUrl, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
+        if (!res.ok) throw new Error("Webhook failed");
       }
-
-      setQueue((prev) => [
-        {
-          id: Date.now(),
-          page: selectedPage,
-          headline: headline.trim(),
-          caption: caption.trim(),
-          template: selectedTemplate,
-          status: scheduleTime ? "Scheduled" : "Pending",
-          scheduledTime: scheduleTime || "Now",
-          pageColor: selectedPage === "TrendWire Daily" ? "bg-cyan-400" : selectedPage === "Civic Pulse" ? "bg-violet-400" : "bg-emerald-400",
-        },
-        ...prev,
-      ]);
-
-      setToast({ type: "success", message: "Post sent to queue successfully." });
-      setHeadline("");
-      setCaption("");
-      setScheduleTime("");
-    } catch {
-      setToast({ type: "error", message: "Failed to send post. Please try again." });
-    } finally {
-      setIsSubmitting(false);
-    }
+      setQueue((prev) => [{
+        id: Date.now(), page: selectedPage, headline: headline.trim(), caption: caption.trim(),
+        template: "News", status: "Pending", scheduledTime: "Now",
+        pageColor: selectedPage === "TrendWire Daily" ? "bg-cyan-400" : selectedPage === "Civic Pulse" ? "bg-violet-400" : "bg-emerald-400",
+      }, ...prev]);
+      setToast({ type: "success", message: "Post sent to queue." });
+      setHeadline(""); setCaption("");
+    } catch { setToast({ type: "error", message: "Failed to send post." }); }
+    finally { setIsSubmitting(false); }
   };
+
+  const submitMedia = async () => {
+    const hasMedia = images.some((i) => i.file) || audio.file;
+    if (!hasMedia) { setToast({ type: "error", message: "Please add at least one media file." }); return; }
+    if (!selectedPage) { setToast({ type: "error", message: "Please select a page first." }); return; }
+    setIsMediaSubmitting(true);
+    try {
+      if (webhookUrl) {
+        const fd = new FormData();
+        fd.append("page", selectedPage);
+        images.forEach((img, i) => { if (img.file) fd.append(`image_${i + 1}`, img.file); });
+        if (audio.file) fd.append("audio", audio.file);
+        await fetch(webhookUrl, { method: "POST", body: fd });
+      }
+      setToast({ type: "success", message: "Media submitted successfully." });
+      setImages(Array.from({ length: 5 }, () => ({ file: null, preview: null })));
+      setAudio({ file: null, preview: null });
+    } catch { setToast({ type: "error", message: "Media submit failed." }); }
+    finally { setIsMediaSubmitting(false); }
+  };
+
+  const imgIcon = <svg className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" /></svg>;
+  const audioIcon = <svg className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 19V6l12-3v13M9 19c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zm12-3c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2z" /></svg>;
 
   return (
     <>
       {toast && (
-        <motion.div
-          initial={{ opacity: 0, y: -16 }}
-          animate={{ opacity: 1, y: 0 }}
-          className={cn(
-            "fixed top-6 right-6 z-50 px-4 py-3 rounded-xl border text-sm shadow-xl",
+        <motion.div initial={{ opacity: 0, y: -16 }} animate={{ opacity: 1, y: 0 }}
+          className={cn("fixed top-6 right-6 z-50 px-4 py-3 rounded-xl border text-sm shadow-xl",
             toast.type === "success" ? "bg-emerald-500/20 border-emerald-500/35 text-emerald-200" : "bg-rose-500/20 border-rose-500/35 text-rose-200"
-          )}
-        >
+          )}>
           {toast.message}
         </motion.div>
       )}
 
       <div className="grid grid-cols-1 xl:grid-cols-5 gap-6">
-        <Card className="xl:col-span-3 p-5 rounded-2xl border border-white/10 bg-white/95 dark:bg-[#081328]">
-          <h2 className="text-2xl font-black tracking-tight mb-5">Compose Post</h2>
+        {/* ── Left column — tabbed card ── */}
+        <Card className="xl:col-span-3 rounded-2xl border border-white/10 bg-white/95 dark:bg-[#081328] overflow-hidden">
 
-          <div className="space-y-5">
-            <div>
-              <Label className="mb-2 block">Select Page</Label>
-              <div className="flex flex-wrap gap-2">
-                {pages.map((page) => (
-                  <button
-                    key={page}
-                    type="button"
-                    onClick={() => setSelectedPage(page)}
-                    className={cn(
-                      "px-3 py-1.5 rounded-full border text-sm transition-colors",
-                      selectedPage === page ? "border-[#0d9488] text-[#0d9488] bg-[#0d9488]/10" : "border-border text-muted-foreground"
-                    )}
-                  >
-                    {page}
-                  </button>
-                ))}
+          {/* Tab switcher */}
+          <div className="flex border-b border-white/10">
+            {(["post", "media"] as const).map((tab) => (
+              <button
+                key={tab}
+                type="button"
+                onClick={() => setActiveTab(tab)}
+                className={cn(
+                  "flex-1 py-3.5 text-sm font-semibold transition-colors",
+                  activeTab === tab
+                    ? "text-[#0d9488] border-b-2 border-[#0d9488] bg-[#0d9488]/5"
+                    : "text-muted-foreground hover:text-foreground"
+                )}
+              >
+                {tab === "post" ? "Compose Post" : "Media Upload"}
+              </button>
+            ))}
+          </div>
+
+          <div className="p-5">
+            {/* ── Post form ── */}
+            {activeTab === "post" && (
+              <div className="space-y-5">
+                <div>
+                  <Label className="mb-2 block">Select Page</Label>
+                  <div className="flex flex-wrap gap-2">
+                    {pages.map((page) => (
+                      <button key={page} type="button" onClick={() => setSelectedPage(page)}
+                        className={cn("px-3 py-1.5 rounded-full border text-sm transition-colors",
+                          selectedPage === page ? "border-[#0d9488] text-[#0d9488] bg-[#0d9488]/10" : "border-border text-muted-foreground"
+                        )}>
+                        {page}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                <div>
+                  <Label className="mb-2 block">Select Template</Label>
+                  {sheetTemplates.length === 0 ? (
+                    <p className="text-xs text-muted-foreground">No templates saved yet — create one in the Templates page.</p>
+                  ) : (
+                    <div className="flex flex-wrap gap-2">
+                      {sheetTemplates.map((t) => (
+                        <button key={t.name} type="button"
+                          onClick={() => setSelectedTemplateObj(selectedTemplateObj?.name === t.name ? null : t)}
+                          className={cn("px-3 py-1.5 rounded-full border text-sm transition-colors",
+                            selectedTemplateObj?.name === t.name ? "border-[#0d9488] text-[#0d9488] bg-[#0d9488]/10" : "border-border text-muted-foreground"
+                          )}>
+                          {t.name}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                <div>
+                  <div className="flex items-center justify-between mb-2">
+                    <Label htmlFor="headline">Headline</Label>
+                    <span className="text-xs text-muted-foreground">{headline.length}/80</span>
+                  </div>
+                  <Input id="headline" value={headline} maxLength={80} onChange={(e) => setHeadline(e.target.value)} placeholder="Enter a strong headline" className="h-12" />
+                </div>
+
+                <div>
+                  <div className="flex items-center justify-between mb-2">
+                    <Label htmlFor="caption">Caption</Label>
+                    <span className="text-xs text-muted-foreground">{caption.length}/300</span>
+                  </div>
+                  <textarea id="caption" rows={4} maxLength={300} value={caption} onChange={(e) => setCaption(e.target.value)}
+                    className="w-full rounded-lg border border-input bg-background px-3 py-2 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring resize-none"
+                    placeholder="Write your caption..." />
+                </div>
+
+                <Button onClick={submitPost} disabled={isSubmitting} className="w-full h-11 bg-[#0d9488] hover:bg-[#0f766e] text-white">
+                  {isSubmitting ? (
+                    <span className="flex items-center gap-2">
+                      <motion.span animate={{ rotate: 360 }} transition={{ duration: 1, repeat: Infinity, ease: "linear" }} className="h-4 w-4 rounded-full border-2 border-white border-t-transparent" />
+                      Sending...
+                    </span>
+                  ) : (
+                    <span className="flex items-center gap-2">Send to Queue <ChevronRight className="h-4 w-4" /></span>
+                  )}
+                </Button>
               </div>
-            </div>
+            )}
 
-            <div>
-              <Label className="mb-2 block">Template</Label>
-              <div className="flex flex-wrap gap-2">
-                {templates.map((template) => (
-                  <button
-                    key={template}
-                    type="button"
-                    onClick={() => setSelectedTemplate(template)}
-                    className={cn(
-                      "px-3 py-1.5 rounded-full border text-sm transition-colors",
-                      selectedTemplate === template ? "border-[#0d9488] text-[#0d9488] bg-[#0d9488]/10" : "border-border text-muted-foreground"
-                    )}
-                  >
-                    {template}
-                  </button>
-                ))}
+            {/* ── Media form ── */}
+            {activeTab === "media" && (
+              <div className="space-y-4">
+                {/* 5 images — 2+2+1 grid */}
+                <div>
+                  <Label className="mb-2 block text-xs text-muted-foreground uppercase tracking-wide">Images (5)</Label>
+                  <div className="grid grid-cols-2 gap-3">
+                    {images.slice(0, 4).map((img, i) => (
+                      <MediaUploadSlot key={i} label={`Image ${i + 1}`} accept="image/*" icon={imgIcon}
+                        preview={img.preview}
+                        onChange={(file, preview) => setImages((prev) => prev.map((it, idx) => idx === i ? { file, preview } : it))}
+                      />
+                    ))}
+                  </div>
+                  {/* 5th image — half width centered */}
+                  <div className="mt-3 grid grid-cols-2 gap-3">
+                    <MediaUploadSlot label="Image 5" accept="image/*" icon={imgIcon}
+                      preview={images[4].preview}
+                      onChange={(file, preview) => setImages((prev) => prev.map((it, idx) => idx === 4 ? { file, preview } : it))}
+                    />
+                    <div />
+                  </div>
+                </div>
+
+                {/* Audio */}
+                <div>
+                  <Label className="mb-2 block text-xs text-muted-foreground uppercase tracking-wide">Audio</Label>
+                  <MediaUploadSlot label="Click to upload audio" accept="audio/*" icon={audioIcon}
+                    preview={audio.preview}
+                    onChange={(file, preview) => setAudio({ file, preview })}
+                  />
+                </div>
+
+                <Button onClick={submitMedia} disabled={isMediaSubmitting} className="w-full h-11 bg-[#0d9488] hover:bg-[#0f766e] text-white">
+                  {isMediaSubmitting ? (
+                    <span className="flex items-center gap-2">
+                      <motion.span animate={{ rotate: 360 }} transition={{ duration: 1, repeat: Infinity, ease: "linear" }} className="h-4 w-4 rounded-full border-2 border-white border-t-transparent" />
+                      Uploading...
+                    </span>
+                  ) : (
+                    <span className="flex items-center gap-2">Submit Media <ChevronRight className="h-4 w-4" /></span>
+                  )}
+                </Button>
               </div>
-            </div>
-
-            <div>
-              <div className="flex items-center justify-between mb-2">
-                <Label htmlFor="headline">Headline</Label>
-                <span className="text-xs text-muted-foreground">{headline.length}/80</span>
-              </div>
-              <Input id="headline" value={headline} maxLength={80} onChange={(e) => setHeadline(e.target.value)} placeholder="Enter a strong headline" className="h-12" />
-            </div>
-
-            <div>
-              <div className="flex items-center justify-between mb-2">
-                <Label htmlFor="caption">Caption</Label>
-                <span className="text-xs text-muted-foreground">{caption.length}/300</span>
-              </div>
-              <textarea
-                id="caption"
-                rows={3}
-                maxLength={300}
-                value={caption}
-                onChange={(e) => setCaption(e.target.value)}
-                className="w-full rounded-lg border border-input bg-background px-3 py-2 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                placeholder="Write your caption..."
-              />
-            </div>
-
-            <div>
-              <Label htmlFor="schedule">Schedule Time</Label>
-              <p className="text-xs text-muted-foreground mb-2">Leave empty to post now</p>
-              <Input id="schedule" type="datetime-local" value={scheduleTime} onChange={(e) => setScheduleTime(e.target.value)} />
-            </div>
-
-            <Button onClick={submitToQueue} disabled={isSubmitting} className="w-full h-11 bg-[#0d9488] hover:bg-[#0f766e] text-white">
-              {isSubmitting ? (
-                <span className="flex items-center gap-2">
-                  <motion.span animate={{ rotate: 360 }} transition={{ duration: 1, repeat: Infinity, ease: "linear" }} className="h-4 w-4 rounded-full border-2 border-white border-t-transparent" />
-                  Sending...
-                </span>
-              ) : (
-                <span className="flex items-center gap-2">
-                  Send to Queue
-                  <ChevronRight className="h-4 w-4" />
-                </span>
-              )}
-            </Button>
+            )}
           </div>
         </Card>
 
-        <Card className="xl:col-span-2 p-5 rounded-2xl border border-white/10 bg-white/95 dark:bg-[#081328]">
+        {/* ── Right column — Live Preview ── */}
+        <Card className="xl:col-span-2 p-5 rounded-2xl border border-white/10 bg-white/95 dark:bg-[#081328] self-start sticky top-4">
           <h3 className="text-lg font-bold mb-4">Live Preview</h3>
-          <div className="rounded-2xl border border-white/10 bg-background/50 p-4">
-            <div className="flex items-center justify-between mb-3">
-              <div className="flex items-center gap-3">
-                <div className="h-10 w-10 rounded-full bg-[#0d9488]/20 text-[#0d9488] grid place-items-center font-bold">{(selectedPage || "?").charAt(0)}</div>
-                <div>
-                  <p className="font-semibold leading-5">{selectedPage || "No page selected"}</p>
-                  <p className="text-xs text-muted-foreground">Just now</p>
+          {selectedTemplateObj?.html ? (
+            <TemplatePreview html={selectedTemplateObj.html} title={selectedTemplateObj.name} />
+          ) : (
+            <div className="rounded-2xl border border-white/10 bg-background/50 p-4">
+              <div className="flex items-center justify-between mb-3">
+                <div className="flex items-center gap-3">
+                  <div className="h-10 w-10 rounded-full bg-[#0d9488]/20 text-[#0d9488] grid place-items-center font-bold text-sm">
+                    {(selectedPage || "?").charAt(0)}
+                  </div>
+                  <div>
+                    <p className="font-semibold leading-5">{selectedPage || "No page selected"}</p>
+                    <p className="text-xs text-muted-foreground">Just now</p>
+                  </div>
                 </div>
+                {selectedTemplateObj && <Badge className="border border-[#0d9488]/40 bg-[#0d9488]/15 text-[#2dd4bf]">{selectedTemplateObj.name}</Badge>}
               </div>
-              <Badge className="border border-[#0d9488]/40 bg-[#0d9488]/15 text-[#2dd4bf]">{selectedTemplate}</Badge>
+              <p className="font-semibold text-base mb-2">{headline || "Your headline will appear here"}</p>
+              <p className="text-sm text-muted-foreground leading-6">{caption || "Your caption preview updates in real time while you type."}</p>
+              <p className="text-xs text-muted-foreground mt-3 opacity-60">Select a template above to see the full HTML preview.</p>
             </div>
-
-            <p className="font-semibold text-base mb-2">{headline || "Your headline will appear here"}</p>
-            <p className="text-sm text-muted-foreground leading-6">{caption || "Your caption preview updates in real time while you type."}</p>
-          </div>
+          )}
         </Card>
       </div>
     </>
