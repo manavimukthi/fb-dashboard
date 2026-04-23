@@ -108,6 +108,7 @@ type ManagedPage = {
   postsToday: number;
   reach: string;
   followers: string;
+  apiError?: string;
 };
 
 type AutomationItem = {
@@ -755,22 +756,39 @@ function SyncProvider({ children }: { children: React.ReactNode }) {
       dayOrder.map((day) => [day, { day, sent: 0, reached: 0, clicked: 0 }])
     );
 
+    type PageMetricResult = { id: number; pageId: string; followers: string; reach: string; postsToday: number; followersNum: number; reachNum: number; apiError?: string };
+
+    const fetchPageNode = async (pid: string, tok: string): Promise<{ followers_count?: number; fan_count?: number; posts?: { data?: Array<{ created_time?: string }> }; error?: { message?: string } } | null> => {
+      const base = `https://graph.facebook.com/v19.0`;
+      // Try 1: standard page node with posts field
+      try {
+        const res = await fetch(`${base}/${pid}?fields=followers_count,fan_count,posts.limit(25){created_time}&access_token=${tok}`, { cache: "no-store" });
+        const json = (await res.json()) as { followers_count?: number; fan_count?: number; posts?: { data?: Array<{ created_time?: string }> }; error?: { message?: string } };
+        if (res.ok && !json.error) return json;
+      } catch { /* try next */ }
+      // Try 2: page node without posts field (metrics only)
+      try {
+        const res = await fetch(`${base}/${pid}?fields=followers_count,fan_count&access_token=${tok}`, { cache: "no-store" });
+        const json = (await res.json()) as { followers_count?: number; fan_count?: number; error?: { message?: string } };
+        if (res.ok && !json.error) return json;
+      } catch { /* failed */ }
+      return null;
+    };
+
     const updated = await Promise.all(
       candidates.map(async (page) => {
         try {
-          const fields = "followers_count,fan_count,posts.limit(25){created_time}";
-          const url = `https://graph.facebook.com/v19.0/${encodeURIComponent(page.pageId ?? "")}?fields=${fields}&access_token=${encodeURIComponent(page.accessToken ?? "")}`;
-          const response = await fetch(url, { method: "GET", cache: "no-store" });
-          const json = (await response.json()) as {
-            followers_count?: number;
-            fan_count?: number;
-            posts?: { data?: Array<{ created_time?: string }> };
-            error?: { message?: string };
-          };
-
-          if (!response.ok || json.error) {
-            return null;
+          const pid = encodeURIComponent(page.pageId ?? "");
+          const tok = encodeURIComponent(page.accessToken ?? "");
+          // Validate token first — catch expired/wrong token early
+          const validateRes = await fetch(`https://graph.facebook.com/v19.0/me?access_token=${tok}`, { cache: "no-store" });
+          const validateJson = (await validateRes.json()) as { error?: { message?: string; type?: string } };
+          if (!validateRes.ok || validateJson.error) {
+            const errMsg = validateJson.error?.message ?? "Invalid or expired access token";
+            return { id: page.id, pageId: page.pageId ?? "", followers: page.followers, reach: page.reach, postsToday: page.postsToday, followersNum: 0, reachNum: 0, apiError: errMsg } as PageMetricResult;
           }
+          const json = await fetchPageNode(pid, tok);
+          if (!json) return { id: page.id, pageId: page.pageId ?? "", followers: page.followers, reach: page.reach, postsToday: page.postsToday, followersNum: 0, reachNum: 0, apiError: "Could not fetch page metrics" } as PageMetricResult;
 
           const followersNum = json.followers_count ?? json.fan_count ?? 0;
           const fanCount = json.fan_count ?? followersNum;
@@ -798,38 +816,42 @@ function SyncProvider({ children }: { children: React.ReactNode }) {
 
           return {
             id: page.id,
+            pageId: page.pageId ?? "",
             followers: formatCompactNumber(followersNum),
             reach: formatCompactNumber(reachNum),
             postsToday,
             followersNum,
             reachNum,
-          };
+            apiError: undefined,
+          } as PageMetricResult;
         } catch {
-          return null;
+          return { id: page.id, pageId: page.pageId ?? "", followers: page.followers, reach: page.reach, postsToday: page.postsToday, followersNum: 0, reachNum: 0, apiError: "Network error fetching metrics" } as PageMetricResult;
         }
       })
     );
 
-    const mapped = updated.filter((entry): entry is { id: number; followers: string; reach: string; postsToday: number; followersNum: number; reachNum: number } => entry !== null);
+    const mapped = updated.filter((entry): entry is PageMetricResult => entry !== null);
     if (mapped.length === 0) return false;
 
-    const metricMap = new Map(mapped.map((entry) => [entry.id, entry]));
+    const metricMap = new Map(mapped.map((entry) => [entry.pageId, entry]));
     setPages((prev) =>
       prev.map((page) => {
-        const next = metricMap.get(page.id);
+        const next = metricMap.get(page.pageId ?? "");
         if (!next) return page;
         return {
           ...page,
-          followers: next.followers,
-          reach: next.reach,
-          postsToday: next.postsToday,
+          followers: next.apiError ? page.followers : next.followers,
+          reach: next.apiError ? page.reach : next.reach,
+          postsToday: next.apiError ? page.postsToday : next.postsToday,
+          apiError: next.apiError,
         };
       })
     );
 
-    const totalFollowers = mapped.reduce((sum, item) => sum + item.followersNum, 0);
-    const totalReach = mapped.reduce((sum, item) => sum + item.reachNum, 0);
-    const postsToday = mapped.reduce((sum, item) => sum + item.postsToday, 0);
+    const successMapped = mapped.filter((item) => !item.apiError);
+    const totalFollowers = successMapped.reduce((sum, item) => sum + item.followersNum, 0);
+    const totalReach = successMapped.reduce((sum, item) => sum + item.reachNum, 0);
+    const postsToday = successMapped.reduce((sum, item) => sum + item.postsToday, 0);
     const chart = dayOrder.map((day) => chartAccumulator.get(day) ?? { day, sent: 0, reached: 0, clicked: 0 });
 
     setDashboardRealtimeData({
@@ -850,33 +872,72 @@ function SyncProvider({ children }: { children: React.ReactNode }) {
     const recentPostFetchLimit = 100;
     const recentPostStoreLimit = 200;
 
+    type RawPost = { id?: string; message?: string; story?: string; created_time?: string; permalink_url?: string };
+
+    const toItems = (posts: RawPost[], pageId: number, pageName: string): LivePostItem[] =>
+      posts.map((post, index) => ({
+        id: `${pageId}-${post.id ?? post.created_time ?? index}`,
+        pageName,
+        headline: (post.message ?? post.story ?? "Untitled post").slice(0, 120),
+        template: "Live",
+        status: "Posted" as QueueStatus,
+        time: post.created_time ? new Date(post.created_time).toLocaleString() : "Unknown",
+        permalink: post.permalink_url,
+        createdAt: post.created_time,
+        graphPostId: post.id,
+      }));
+
+    const fetchPostsFromUrl = async (url: string): Promise<RawPost[] | null> => {
+      try {
+        const res = await fetch(url, { method: "GET", cache: "no-store" });
+        const json = (await res.json()) as {
+          data?: RawPost[];
+          posts?: { data?: RawPost[] };
+          published_posts?: { data?: RawPost[] };
+          error?: { message?: string };
+        };
+        if (!res.ok || json.error) return null;
+        return json.data ?? json.posts?.data ?? json.published_posts?.data ?? null;
+      } catch {
+        return null;
+      }
+    };
+
     const fetched = await Promise.all(
       candidates.map(async (page) => {
-        try {
-          const fields = `posts.limit(${recentPostFetchLimit}){id,message,story,created_time,permalink_url}`;
-          const url = `https://graph.facebook.com/v19.0/${encodeURIComponent(page.pageId ?? "")}?fields=${fields}&access_token=${encodeURIComponent(page.accessToken ?? "")}`;
-          const response = await fetch(url, { method: "GET", cache: "no-store" });
-          const json = (await response.json()) as {
-            posts?: { data?: Array<{ id?: string; message?: string; story?: string; created_time?: string; permalink_url?: string }> };
-            error?: { message?: string };
-          };
+        const pid = encodeURIComponent(page.pageId ?? "");
+        const tok = encodeURIComponent(page.accessToken ?? "");
+        const base = `https://graph.facebook.com/v19.0`;
+        const postFields = `id,message,story,created_time,permalink_url`;
+        const limit = recentPostFetchLimit;
 
-          if (!response.ok || json.error) return [] as LivePostItem[];
+        // Try 1: page node with `posts` field
+        let posts = await fetchPostsFromUrl(
+          `${base}/${pid}?fields=posts.limit(${limit}){${postFields}}&access_token=${tok}`
+        );
 
-          return (json.posts?.data ?? []).map((post, index) => ({
-            id: `${page.id}-${post.id ?? post.created_time ?? index}`,
-            pageName: page.name,
-            headline: (post.message ?? post.story ?? "Untitled post").slice(0, 120),
-            template: "Live",
-            status: "Posted" as QueueStatus,
-            time: post.created_time ? new Date(post.created_time).toLocaleString() : "Unknown",
-            permalink: post.permalink_url,
-            createdAt: post.created_time,
-            graphPostId: post.id,
-          }));
-        } catch {
-          return [] as LivePostItem[];
+        // Try 2: /posts edge endpoint
+        if (!posts?.length) {
+          posts = await fetchPostsFromUrl(
+            `${base}/${pid}/posts?limit=${limit}&fields=${postFields}&access_token=${tok}`
+          );
         }
+
+        // Try 3: /published_posts edge endpoint
+        if (!posts?.length) {
+          posts = await fetchPostsFromUrl(
+            `${base}/${pid}/published_posts?limit=${limit}&fields=${postFields}&access_token=${tok}`
+          );
+        }
+
+        // Try 4: /feed edge endpoint
+        if (!posts?.length) {
+          posts = await fetchPostsFromUrl(
+            `${base}/${pid}/feed?limit=${limit}&fields=${postFields}&access_token=${tok}`
+          );
+        }
+
+        return toItems(posts ?? [], page.id, page.name);
       })
     );
 
@@ -1046,12 +1107,42 @@ function DashboardOverview() {
     return String(value);
   }, []);
 
+  const parseMetricStr = React.useCallback((value: string): number => {
+    const s = String(value || "0").trim().toUpperCase();
+    if (s.endsWith("M")) return parseFloat(s) * 1_000_000;
+    if (s.endsWith("K")) return parseFloat(s) * 1_000;
+    return parseFloat(s) || 0;
+  }, []);
+
+  // Posts in last 7 days from all pages (from recentPosts)
+  const postsLast7d = React.useMemo(() => {
+    const cutoff = Date.now() - 7 * 24 * 60 * 60 * 1000;
+    return recentPosts.filter((p) => {
+      const ts = p.createdAt ? Date.parse(p.createdAt) : 0;
+      return ts >= cutoff;
+    }).length;
+  }, [recentPosts]);
+
+  // Total followers from all pages (from FB API)
+  const totalFollowers = React.useMemo(() => {
+    const fromPages = syncData.pages.reduce((sum, p) => sum + parseMetricStr(p.followers), 0);
+    return fromPages || dashboardRealtimeData.totalFollowers;
+  }, [syncData.pages, dashboardRealtimeData.totalFollowers, parseMetricStr]);
+
+  // Total reach: sum from pages, fall back to chart accumulated reach
+  const totalReach = React.useMemo(() => {
+    const fromPages = syncData.pages.reduce((sum, p) => sum + parseMetricStr(p.reach), 0);
+    if (fromPages > 0) return fromPages;
+    const fromChart = dashboardRealtimeData.chart.reduce((sum, day) => sum + day.reached, 0);
+    return fromChart || dashboardRealtimeData.totalReach;
+  }, [syncData.pages, dashboardRealtimeData.chart, dashboardRealtimeData.totalReach, parseMetricStr]);
+
   const dynamicProgressStats = React.useMemo(() => ([
-    { title: "Posts Today", value: String(dashboardRealtimeData.postsToday), growth: "+0%", progress: Math.min(100, dashboardRealtimeData.postsToday * 2), icon: Send },
-    { title: "Total Reach", value: formatCompact(dashboardRealtimeData.totalReach), growth: "+0%", progress: Math.min(100, Math.round(dashboardRealtimeData.totalReach / 1000)), icon: TrendingUp },
-    { title: "Total Followers", value: formatCompact(dashboardRealtimeData.totalFollowers), growth: "+0%", progress: Math.min(100, Math.round(dashboardRealtimeData.totalFollowers / 1000)), icon: Users },
+    { title: "Posts (7 days)", value: String(postsLast7d), growth: "+0%", progress: Math.min(100, postsLast7d * 5), icon: Send },
+    { title: "Total Reach", value: formatCompact(totalReach), growth: "+0%", progress: Math.min(100, Math.round(totalReach / 10)), icon: TrendingUp },
+    { title: "Total Followers", value: formatCompact(totalFollowers), growth: "+0%", progress: Math.min(100, Math.round(totalFollowers / 100)), icon: Users },
     { title: "Failed Posts", value: String(dashboardRealtimeData.failedPosts), growth: dashboardRealtimeData.failedPosts > 0 ? "+0%" : "-100%", progress: Math.min(100, dashboardRealtimeData.failedPosts * 10), icon: AlertCircle },
-  ]), [dashboardRealtimeData.failedPosts, dashboardRealtimeData.postsToday, dashboardRealtimeData.totalFollowers, dashboardRealtimeData.totalReach, formatCompact]);
+  ]), [dashboardRealtimeData.failedPosts, postsLast7d, totalFollowers, totalReach, formatCompact]);
 
   const topReachPage = React.useMemo(() => {
     const parseMetric = (value: string) => {
@@ -1528,7 +1619,11 @@ function PostMonitorPage() {
     return recentPosts.filter((post) => !hidden.has(post.id));
   }, [hiddenPostIds, recentPosts]);
 
-  const pageOptions = React.useMemo(() => ["All", ...Array.from(new Set(visibleSourcePosts.map((post) => post.pageName)))], [visibleSourcePosts]);
+  const pageOptions = React.useMemo(() => {
+    const fromPosts = visibleSourcePosts.map((post) => post.pageName);
+    const fromPages = syncData.pages.map((p) => p.name);
+    return ["All", ...Array.from(new Set([...fromPages, ...fromPosts]))];
+  }, [visibleSourcePosts, syncData.pages]);
 
   const filteredPosts = React.useMemo(() => {
     if (pageFilter === "All") return visibleSourcePosts;
@@ -2392,7 +2487,7 @@ function MyPagesPage() {
     pages?: StoredPageRecord[];
   };
 
-  const { syncData, setPages } = useSync();
+  const { syncData, setPages, syncNow, recentPosts } = useSync();
   const [showForm, setShowForm] = React.useState(false);
   const [isSubmitting, setIsSubmitting] = React.useState(false);
   const [isFetching, setIsFetching] = React.useState(false);
@@ -2404,91 +2499,11 @@ function MyPagesPage() {
 
   const APPS_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbz5HtEOSeVhzjnPXEVistZ6jcrXogHL7V1jLk_zGKo5CCDMl5aVcGyIGhRCviVNfEI/exec";
 
-  type AppsScriptRow = {
-    page_id: string;
-    page_name: string;
-    access_token: string;
-    status: string;
-    added_date?: string;
-  };
-
-  const stableNumId = (s: string): number => {
-    let h = 0;
-    for (let i = 0; i < s.length; i++) h = (Math.imul(31, h) + s.charCodeAt(i)) | 0;
-    return Math.abs(h) || 1;
-  };
-
-  const appsScriptToManagedPages = React.useCallback((rows: AppsScriptRow[]): ManagedPage[] => {
-    const colors = ["bg-rose-500", "bg-blue-500", "bg-orange-500", "bg-purple-500", "bg-amber-500", "bg-teal-500"];
-    return rows
-      .filter((r) => r.page_id || r.page_name)
-      .map((r, index) => ({
-        id: stableNumId(r.page_id || r.page_name),
-        name: r.page_name || `Page ${r.page_id}`,
-        handle: r.page_name ? `@${r.page_name.toLowerCase().replace(/\s+/g, "")}` : "",
-        pageId: r.page_id,
-        accessToken: r.access_token,
-        status: (r.status || "").toLowerCase() === "paused" ? ("Paused" as PageStatus) : ("Active" as PageStatus),
-        color: colors[index % colors.length],
-        postsToday: 0,
-        reach: "0",
-        followers: "0",
-      }));
-  }, []);
-
-  const fetchStatsForPages = React.useCallback(async (pages: ManagedPage[]) => {
-    const updated = await Promise.all(
-      pages.map(async (page) => {
-        if (!page.pageId || !page.accessToken) return page;
-        try {
-          const fields = "name,fan_count,followers_count";
-          const url = `https://graph.facebook.com/v19.0/${encodeURIComponent(page.pageId)}?fields=${fields}&access_token=${encodeURIComponent(page.accessToken)}`;
-          const res = await fetch(url);
-          const json = await res.json() as { fan_count?: number; followers_count?: number; error?: { message?: string } };
-          if (!res.ok || json.error) return page;
-          const followers = json.followers_count ?? json.fan_count ?? 0;
-          const fanCount = json.fan_count ?? followers;
-          const fmtFollowers = followers >= 1000 ? `${(followers / 1000).toFixed(1)}K` : String(followers);
-          const fmtReach = fanCount >= 1000 ? `${Math.round(fanCount * 3.8 / 1000)}K` : String(Math.round(fanCount * 3.8));
-          return { ...page, followers: fmtFollowers, reach: fmtReach };
-        } catch {
-          return page;
-        }
-      })
-    );
-    setPages(updated);
-  }, [setPages]);
-
-  const fetchAndSetPages = React.useCallback(async () => {
-    try {
-      const res = await fetch(`${APPS_SCRIPT_URL}?action=getAll`, { cache: "no-store" });
-      if (!res.ok) return;
-      const rows = await res.json() as AppsScriptRow[];
-      if (Array.isArray(rows)) {
-        const pages = appsScriptToManagedPages(rows);
-        setPages(pages);
-        void fetchStatsForPages(pages);
-      }
-    } catch {
-      // keep current state on network error
-    }
-  }, [appsScriptToManagedPages, setPages, fetchStatsForPages]);
-
   const pushSubmissionLog = React.useCallback((entry: PageStorageSubmission) => {
     setSubmissionLog((prev) => {
       return [entry, ...prev].slice(0, 20);
     });
   }, []);
-
-  React.useEffect(() => {
-    void fetchAndSetPages();
-  }, [fetchAndSetPages]);
-
-  // Poll every 30 s to stay in sync with Google Sheet
-  React.useEffect(() => {
-    const id = setInterval(() => void fetchAndSetPages(), 30_000);
-    return () => clearInterval(id);
-  }, [fetchAndSetPages]);
 
   React.useEffect(() => {
     if (!toast) return;
@@ -2548,7 +2563,7 @@ function MyPagesPage() {
       setToast({ type: "success", message: "Account deleted from Google Sheet." });
       // brief pause so Apps Script has time to commit the delete
       await new Promise<void>((r) => setTimeout(r, 1200));
-      await fetchAndSetPages();
+      await syncNow();
     } catch {
       setToast({ type: "error", message: "Delete request failed." });
       setPages((prev) => prev.filter((p) => p.id !== id));
@@ -2625,7 +2640,7 @@ function MyPagesPage() {
       setToast({ type: "success", message: "Account saved to Google Sheet." });
       // brief pause so Apps Script has time to commit the row
       await new Promise<void>((r) => setTimeout(r, 1200));
-      await fetchAndSetPages();
+      await syncNow();
     } catch {
       setToast({ type: "error", message: "Could not save to Google Sheet." });
     } finally {
@@ -2668,11 +2683,23 @@ function MyPagesPage() {
               <div className="space-y-1 text-xs text-muted-foreground mt-2">
                 <p className="truncate">Page ID: {page.pageId || "-"}</p>
                 <p className="truncate">Access Token: {page.accessToken ? `${page.accessToken.slice(0, 8)}...` : "-"}</p>
+                {page.apiError && (
+                  <p className="truncate text-rose-400 font-medium mt-1">⚠ Token error: {page.apiError}</p>
+                )}
               </div>
               <div className="grid grid-cols-3 gap-2 my-4">
-                <div className="rounded-lg border border-white/10 p-2"><p className="text-[11px] text-muted-foreground">Posts</p><p className="font-semibold mt-1">{page.postsToday}</p></div>
-                <div className="rounded-lg border border-white/10 p-2"><p className="text-[11px] text-muted-foreground">Reach</p><p className="font-semibold mt-1">{page.reach}</p></div>
-                <div className="rounded-lg border border-white/10 p-2"><p className="text-[11px] text-muted-foreground">Followers</p><p className="font-semibold mt-1">{page.followers}</p></div>
+                {(() => {
+                  const cutoff = Date.now() - 7 * 24 * 60 * 60 * 1000;
+                  const pagePostsLast7 = recentPosts.filter((rp) => rp.pageName === page.name && (rp.createdAt ? Date.parse(rp.createdAt) >= cutoff : false)).length;
+                  const displayPosts = pagePostsLast7 || page.postsToday;
+                  return (
+                    <>
+                      <div className="rounded-lg border border-white/10 p-2"><p className="text-[11px] text-muted-foreground">Posts (7d)</p><p className="font-semibold mt-1">{displayPosts}</p></div>
+                      <div className="rounded-lg border border-white/10 p-2"><p className="text-[11px] text-muted-foreground">Reach</p><p className="font-semibold mt-1">{page.reach}</p></div>
+                      <div className="rounded-lg border border-white/10 p-2"><p className="text-[11px] text-muted-foreground">Followers</p><p className="font-semibold mt-1">{page.followers}</p></div>
+                    </>
+                  );
+                })()}
               </div>
               <div className="flex items-center justify-between">
                 <Button size="sm" variant="outline" onClick={() => togglePause(page.id)}>{page.status === "Active" ? "Pause" : "Resume"}</Button>
@@ -3285,7 +3312,7 @@ function WorkflowsPage() {
 }
 
 function CommentModerationPage() {
-  const { liveComments } = useSync();
+  const { liveComments, syncData } = useSync();
   const [activeFilter, setActiveFilter] = React.useState<ModerationFilter>("All");
   const [pageFilter, setPageFilter] = React.useState<string>("All");
   const [comments, setComments] = React.useState<CommentItem[]>(liveComments);
@@ -3295,7 +3322,11 @@ function CommentModerationPage() {
     setComments(liveComments);
   }, [liveComments]);
 
-  const pageOptions = React.useMemo(() => ["All", ...Array.from(new Set(liveComments.map((c) => c.pageName)))], [liveComments]);
+  const pageOptions = React.useMemo(() => {
+    const fromComments = liveComments.map((c) => c.pageName);
+    const fromPages = syncData.pages.map((p) => p.name);
+    return ["All", ...Array.from(new Set([...fromPages, ...fromComments]))];
+  }, [liveComments, syncData.pages]);
 
   const filteredByPageComments = React.useMemo(() => {
     if (pageFilter === "All") return comments;
@@ -3459,8 +3490,9 @@ function PageAnalyticsPage() {
   const reachNumber = parseMetric(selectedPageMetrics?.reach ?? "0");
   const followersDisplay = selectedPageMetrics?.followers ?? "0";
   const reachDisplay = selectedPageMetrics?.reach ?? "0";
-  const postsLast7 = inLastDays(7);
-  const postsLast30 = inLastDays(30);
+  // Use recentPosts count, but fall back to postsToday from FB metrics API if recentPosts is empty
+  const postsLast7 = inLastDays(7) || (selectedPagePosts.length === 0 ? 0 : 0);
+  const postsLast30 = Math.max(inLastDays(30), selectedPagePosts.length === 0 ? (selectedPageMetrics?.postsToday ?? 0) : 0);
 
   const syncStatusLabel =
     syncStatus === "success"
