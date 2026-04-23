@@ -1528,7 +1528,12 @@ function PostMonitorPage() {
     return recentPosts.filter((post) => !hidden.has(post.id));
   }, [hiddenPostIds, recentPosts]);
 
-  const pageOptions = React.useMemo(() => ["All", ...Array.from(new Set(visibleSourcePosts.map((post) => post.pageName)))], [visibleSourcePosts]);
+  const pageOptions = React.useMemo(() => {
+    const fromPosts = new Set(visibleSourcePosts.map((post) => post.pageName));
+    const allPageNames = syncData.pages.map((p) => p.name);
+    const combined = Array.from(new Set([...allPageNames, ...fromPosts]));
+    return ["All", ...combined];
+  }, [visibleSourcePosts, syncData.pages]);
 
   const filteredPosts = React.useMemo(() => {
     if (pageFilter === "All") return visibleSourcePosts;
@@ -1610,24 +1615,31 @@ function PostMonitorPage() {
       </div>
 
       <Card className="p-5 rounded-2xl border border-white/10 bg-white/95 dark:bg-[#081328]">
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-5">
-          <div className="rounded-xl border border-white/10 p-4">
-            <p className="text-xs text-muted-foreground">Total Posts</p>
-            <p className="text-2xl font-black mt-1">{filteredPosts.length}</p>
-          </div>
-          <div className="rounded-xl border border-white/10 p-4">
-            <p className="text-xs text-muted-foreground">Reach</p>
-            <p className="text-2xl font-black mt-1">{dashboardRealtimeData.totalReach}</p>
-          </div>
-          <div className="rounded-xl border border-white/10 p-4">
-            <p className="text-xs text-muted-foreground">Followers</p>
-            <p className="text-2xl font-black mt-1">{dashboardRealtimeData.totalFollowers}</p>
-          </div>
-          <div className="rounded-xl border border-white/10 p-4">
-            <p className="text-xs text-muted-foreground">Failed Syncs</p>
-            <p className="text-2xl font-black mt-1">{dashboardRealtimeData.failedPosts}</p>
-          </div>
-        </div>
+        {(() => {
+          const activePage = pageFilter !== "All" ? syncData.pages.find((p) => p.name === pageFilter) : null;
+          const displayReach = activePage ? activePage.reach : String(dashboardRealtimeData.totalReach || syncData.pages.reduce((sum, p) => sum + (parseFloat(p.reach) || 0), 0));
+          const displayFollowers = activePage ? activePage.followers : String(dashboardRealtimeData.totalFollowers || syncData.pages.reduce((sum, p) => sum + (parseFloat(p.followers) || 0), 0));
+          return (
+            <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-5">
+              <div className="rounded-xl border border-white/10 p-4">
+                <p className="text-xs text-muted-foreground">Total Posts</p>
+                <p className="text-2xl font-black mt-1">{filteredPosts.length}</p>
+              </div>
+              <div className="rounded-xl border border-white/10 p-4">
+                <p className="text-xs text-muted-foreground">Reach</p>
+                <p className="text-2xl font-black mt-1">{displayReach}</p>
+              </div>
+              <div className="rounded-xl border border-white/10 p-4">
+                <p className="text-xs text-muted-foreground">Followers</p>
+                <p className="text-2xl font-black mt-1">{displayFollowers}</p>
+              </div>
+              <div className="rounded-xl border border-white/10 p-4">
+                <p className="text-xs text-muted-foreground">Failed Syncs</p>
+                <p className="text-2xl font-black mt-1">{dashboardRealtimeData.failedPosts}</p>
+              </div>
+            </div>
+          );
+        })()}
 
         <div className="overflow-x-auto">
           <table className="w-full min-w-[920px]">
