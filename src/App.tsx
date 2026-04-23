@@ -572,6 +572,14 @@ function SyncProvider({ children }: { children: React.ReactNode }) {
   const [lastSyncedAt, setLastSyncedAt] = React.useState<number | null>(null);
   const [failedAttempts, setFailedAttempts] = React.useState(0);
 
+  // Always-current refs so async callbacks never read stale closure values
+  const pagesRef = React.useRef<ManagedPage[]>([]);
+  pagesRef.current = pages;
+  const queueRef = React.useRef<QueueItem[]>([]);
+  queueRef.current = queue;
+  const automationsRef = React.useRef<AutomationItem[]>([]);
+  automationsRef.current = automations;
+
   const savedConnectionsConfig = useConnectionsConfig();
 
   const webhook =
@@ -635,7 +643,7 @@ function SyncProvider({ children }: { children: React.ReactNode }) {
       .filter((item): item is { pageId: string; pageName: string; accessToken: string; status: PageStatus; handle: string; followers: string; reach: string } => item !== null);
   }, []);
 
-  const syncPagesFromGoogleSheet = React.useCallback(async () => {
+  const syncPagesFromGoogleSheet = React.useCallback(async (): Promise<ManagedPage[] | null> => {
     const endpoints = ["https://script.google.com/macros/s/AKfycbz5HtEOSeVhzjnPXEVistZ6jcrXogHL7V1jLk_zGKo5CCDMl5aVcGyIGhRCviVNfEI/exec?action=getAll"];
 
     for (const endpoint of endpoints) {
@@ -653,71 +661,73 @@ function SyncProvider({ children }: { children: React.ReactNode }) {
 
         const parsedPages = parseGoogleSheetPages(payload);
         if (parsedPages.length === 0) {
+          pagesRef.current = [];
           setPages([]);
-          return true;
+          return [];
         }
 
         const palette = ["bg-rose-500", "bg-blue-500", "bg-orange-500", "bg-purple-500", "bg-amber-500", "bg-teal-500"];
 
-        setPages((prev) => {
-          const usedIds = new Set(prev.map((item) => item.id));
-          const next = [...prev];
+        // Compute merged pages synchronously using the ref so we can return them
+        // immediately (React batches setPages asynchronously).
+        const prev = pagesRef.current;
+        const usedIds = new Set(prev.map((item) => item.id));
+        const next = [...prev];
 
-          parsedPages.forEach((sheetPage, idx) => {
-            const normalizedName = sheetPage.pageName.toLowerCase();
-            const existingIndex = next.findIndex((page) => {
-              const byPageId = Boolean(sheetPage.pageId && page.pageId && page.pageId === sheetPage.pageId);
-              const byName = page.name.trim().toLowerCase() === normalizedName;
-              return byPageId || byName;
-            });
-
-            const normalizedHandle = `@${sheetPage.pageName.toLowerCase().replace(/\s+/g, "")}`;
-
-            if (existingIndex >= 0) {
-              const current = next[existingIndex];
-              next[existingIndex] = {
-                ...current,
-                name: sheetPage.pageName || current.name,
-                pageId: sheetPage.pageId || current.pageId,
-                accessToken: sheetPage.accessToken || current.accessToken,
-                status: sheetPage.status,
-                handle: sheetPage.handle || current.handle || normalizedHandle,
-                followers: sheetPage.followers || current.followers,
-                reach: sheetPage.reach || current.reach,
-              };
-              return;
-            }
-
-            let generatedId = Date.now() + idx;
-            while (usedIds.has(generatedId)) {
-              generatedId += 1;
-            }
-            usedIds.add(generatedId);
-
-            next.push({
-              id: generatedId,
-              name: sheetPage.pageName || `Page ${idx + 1}`,
-              handle: sheetPage.handle || normalizedHandle,
-              pageId: sheetPage.pageId,
-              accessToken: sheetPage.accessToken,
-              status: sheetPage.status,
-              color: palette[next.length % palette.length],
-              postsToday: 0,
-              reach: sheetPage.reach || "0",
-              followers: sheetPage.followers || "0",
-            });
+        parsedPages.forEach((sheetPage, idx) => {
+          const normalizedName = sheetPage.pageName.toLowerCase();
+          const existingIndex = next.findIndex((page) => {
+            const byPageId = Boolean(sheetPage.pageId && page.pageId && page.pageId === sheetPage.pageId);
+            const byName = page.name.trim().toLowerCase() === normalizedName;
+            return byPageId || byName;
           });
 
-          return next;
+          const normalizedHandle = `@${sheetPage.pageName.toLowerCase().replace(/\s+/g, "")}`;
+
+          if (existingIndex >= 0) {
+            const current = next[existingIndex];
+            next[existingIndex] = {
+              ...current,
+              name: sheetPage.pageName || current.name,
+              pageId: sheetPage.pageId || current.pageId,
+              accessToken: sheetPage.accessToken || current.accessToken,
+              status: sheetPage.status,
+              handle: sheetPage.handle || current.handle || normalizedHandle,
+              followers: sheetPage.followers || current.followers,
+              reach: sheetPage.reach || current.reach,
+            };
+            return;
+          }
+
+          let generatedId = Date.now() + idx;
+          while (usedIds.has(generatedId)) {
+            generatedId += 1;
+          }
+          usedIds.add(generatedId);
+
+          next.push({
+            id: generatedId,
+            name: sheetPage.pageName || `Page ${idx + 1}`,
+            handle: sheetPage.handle || normalizedHandle,
+            pageId: sheetPage.pageId,
+            accessToken: sheetPage.accessToken,
+            status: sheetPage.status,
+            color: palette[next.length % palette.length],
+            postsToday: 0,
+            reach: sheetPage.reach || "0",
+            followers: sheetPage.followers || "0",
+          });
         });
 
-        return true;
+        pagesRef.current = next;
+        setPages(next);
+        return next;
       } catch {
         // Try next endpoint variant.
       }
     }
 
-    return false;
+    return null;
   }, [parseGoogleSheetPages]);
 
   const formatCompactNumber = React.useCallback((value: number): string => {
@@ -726,8 +736,8 @@ function SyncProvider({ children }: { children: React.ReactNode }) {
     return String(value);
   }, []);
 
-  const syncPageMetricsFromFacebook = React.useCallback(async () => {
-    const candidates = pages.filter((page) => page.pageId && page.accessToken);
+  const syncPageMetricsFromFacebook = React.useCallback(async (freshPages?: ManagedPage[]) => {
+    const candidates = (freshPages ?? pagesRef.current).filter((page) => page.pageId && page.accessToken);
     if (candidates.length === 0) return false;
 
     const dayOrder: DashboardChartPoint["day"][] = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
@@ -832,10 +842,10 @@ function SyncProvider({ children }: { children: React.ReactNode }) {
     });
 
     return true;
-  }, [failedAttempts, formatCompactNumber, pages]);
+  }, [failedAttempts, formatCompactNumber]);
 
-  const syncRecentPostsFromFacebook = React.useCallback(async () => {
-    const candidates = pages.filter((page) => page.pageId && page.accessToken);
+  const syncRecentPostsFromFacebook = React.useCallback(async (freshPages?: ManagedPage[]) => {
+    const candidates = (freshPages ?? pagesRef.current).filter((page) => page.pageId && page.accessToken);
     if (candidates.length === 0) return false;
     const recentPostFetchLimit = 100;
     const recentPostStoreLimit = 200;
@@ -883,10 +893,10 @@ function SyncProvider({ children }: { children: React.ReactNode }) {
     setRecentPosts(nextRecentPosts);
     setDashboardRealtimeData((prev) => ({ ...prev, recentPosts: nextRecentPosts }));
     return true;
-  }, [pages]);
+  }, []);
 
-  const syncRecentCommentsFromFacebook = React.useCallback(async () => {
-    const candidates = pages.filter((page) => page.pageId && page.accessToken);
+  const syncRecentCommentsFromFacebook = React.useCallback(async (freshPages?: ManagedPage[]) => {
+    const candidates = (freshPages ?? pagesRef.current).filter((page) => page.pageId && page.accessToken);
     if (candidates.length === 0) return false;
     const commentFetchLimit = 50;
 
@@ -932,7 +942,7 @@ function SyncProvider({ children }: { children: React.ReactNode }) {
 
     setLiveComments(flattened.slice(0, 100));
     return true;
-  }, [pages]);
+  }, []);
 
   React.useEffect(() => {
     const cached = localStorage.getItem("sync-cache");
@@ -968,9 +978,9 @@ function SyncProvider({ children }: { children: React.ReactNode }) {
         if (typeof data.lastUpdated === "string") setLastUpdated(data.lastUpdated);
 
         const newState: SyncState = {
-          queue: Array.isArray(data.queue) ? (data.queue as QueueItem[]) : queue,
-          pages: Array.isArray(data.pages) ? (data.pages as ManagedPage[]) : pages,
-          automations: Array.isArray(data.automations) ? (data.automations as AutomationItem[]) : automations,
+          queue: Array.isArray(data.queue) ? (data.queue as QueueItem[]) : queueRef.current,
+          pages: Array.isArray(data.pages) ? (data.pages as ManagedPage[]) : pagesRef.current,
+          automations: Array.isArray(data.automations) ? (data.automations as AutomationItem[]) : automationsRef.current,
           lastUpdated: typeof data.lastUpdated === "string" ? data.lastUpdated : new Date().toISOString(),
         };
         localStorage.setItem("sync-cache", JSON.stringify(newState));
@@ -980,10 +990,12 @@ function SyncProvider({ children }: { children: React.ReactNode }) {
       }
     }
 
-    sheetSuccess = await syncPagesFromGoogleSheet();
-    facebookMetricsSuccess = await syncPageMetricsFromFacebook();
-    recentPostsSuccess = await syncRecentPostsFromFacebook();
-    await syncRecentCommentsFromFacebook();
+    const freshPages = await syncPagesFromGoogleSheet();
+    sheetSuccess = freshPages !== null;
+    const pagesToSync = freshPages ?? pagesRef.current;
+    facebookMetricsSuccess = await syncPageMetricsFromFacebook(pagesToSync);
+    recentPostsSuccess = await syncRecentPostsFromFacebook(pagesToSync);
+    await syncRecentCommentsFromFacebook(pagesToSync);
 
     if (webhookSuccess || sheetSuccess || facebookMetricsSuccess || recentPostsSuccess) {
       setLastUpdated(new Date().toISOString());
@@ -995,7 +1007,7 @@ function SyncProvider({ children }: { children: React.ReactNode }) {
 
     setSyncStatus("error");
     setFailedAttempts((prev) => prev + 1);
-  }, [automations, pages, queue, syncPageMetricsFromFacebook, syncPagesFromGoogleSheet, syncRecentPostsFromFacebook, webhook]);
+  }, [syncPageMetricsFromFacebook, syncPagesFromGoogleSheet, syncRecentCommentsFromFacebook, syncRecentPostsFromFacebook, webhook]);
 
   const syncNowRef = React.useRef(syncNow);
   React.useEffect(() => { syncNowRef.current = syncNow; });
