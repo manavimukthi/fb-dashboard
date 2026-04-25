@@ -39,6 +39,7 @@ import {
   Check,
   Maximize2,
   Minimize2,
+  Upload,
 } from "lucide-react";
 import {
   LineChart,
@@ -75,7 +76,8 @@ type ViewKey =
   | "Comment Moderation"
   | "Page Analytics"
   | "Connections"
-  | "Notifications";
+  | "Notifications"
+  | "Media Upload";
 
 type QueueStatus = "Pending" | "Scheduled" | "Posted" | "Failed";
 type TemplateName = "Breaking" | "News" | "Fact" | "Opinion" | "Weekly Recap";
@@ -156,20 +158,16 @@ type SchedulerEvent = {
 };
 
 type ConnectionsConfig = {
-  facebookTokens: Record<string, string>;
   baseWebhookUrl: string;
-  postWebhook: string;
   syncWebhook: string;
-  automationWebhook: string;
+  formsWebhookUrl: string;
+  mediaWebhookUrl: string;
   n8nApiBaseUrl: string;
   n8nApiKey: string;
   sheetDeploymentId: string;
   sheetWebAppUrl: string;
-  sheetId: string;
-  serviceEmail: string;
-  autoSyncSeconds: number;
-  realTimeQueueSync: boolean;
-  telegramAlerts: boolean;
+  composeScriptUrl: string;
+  pagesScriptUrl: string;
 };
 
 type SyncState = {
@@ -422,31 +420,23 @@ const schedulerEventsSeed: SchedulerEvent[] = [
 
 const menuSections: Array<{ title: string; items: Array<{ icon: React.ComponentType<{ className?: string }>; label: ViewKey }> }> = [
   { title: "Main", items: [{ icon: Home, label: "Dashboard" }, { icon: Layout, label: "Content Queue" }, { icon: BarChart3, label: "Post Monitor" }] },
-  { title: "Content", items: [{ icon: Plus, label: "Compose Post" }, { icon: FileText, label: "Templates" }, { icon: Calendar, label: "Schedulers" }] },
+  { title: "Content", items: [{ icon: Plus, label: "Compose Post" }, { icon: Upload, label: "Media Upload" }, { icon: FileText, label: "Templates" }, { icon: Calendar, label: "Schedulers" }] },
   { title: "Automation", items: [{ icon: GitBranch, label: "Automations" }, { icon: Blocks, label: "Workflows" }] },
   { title: "Pages", items: [{ icon: Users, label: "My Pages" }, { icon: MessageSquare, label: "Comment Moderation" }, { icon: TrendingUp, label: "Page Analytics" }] },
   { title: "Settings", items: [{ icon: Settings, label: "Connections" }, { icon: Bell, label: "Notifications" }] },
 ];
 
 const defaultConnections: ConnectionsConfig = {
-  facebookTokens: {
-    "TrendWire Daily": "EAAB***A91",
-    "Civic Pulse": "EAAB***M17",
-    "Science Snap": "EAAB***Z03",
-  },
   baseWebhookUrl: "",
-  postWebhook: "",
   syncWebhook: "",
-  automationWebhook: "",
+  formsWebhookUrl: "",
+  mediaWebhookUrl: "",
   n8nApiBaseUrl: "",
   n8nApiKey: "",
   sheetDeploymentId: "",
   sheetWebAppUrl: "",
-  sheetId: "",
-  serviceEmail: "service-account@project.iam.gserviceaccount.com",
-  autoSyncSeconds: 30,
-  realTimeQueueSync: true,
-  telegramAlerts: false,
+  composeScriptUrl: "",
+  pagesScriptUrl: "",
 };
 
 const DEFAULT_N8N_API_BASE_URL = "https://n8n.kasunmadhuwantha.cv/api/v1";
@@ -1802,6 +1792,285 @@ function PostMonitorPage() {
   );
 }
 
+function MediaUploadPage() {
+  const connConfig = useConnectionsConfig();
+  const { syncData } = useSync();
+
+  const MEDIA_WEBHOOK = connConfig.mediaWebhookUrl?.trim() || "https://n8n.kasunmadhuwantha.cv/webhook-test/646cd2d7-b6a7-462e-ba68-4f321a94a513";
+
+  const pages = React.useMemo(() => {
+    const dynamic = syncData.pages.map((p) => p.name.trim()).filter((n, i, a) => n && a.indexOf(n) === i);
+    return dynamic.length > 0 ? dynamic : ["TrendWire Daily", "Civic Pulse", "Science Snap"];
+  }, [syncData.pages]);
+
+  const [selectedPage, setSelectedPage] = React.useState("");
+  const [imageUrls, setImageUrls] = React.useState<string[]>(Array(7).fill(""));
+  const [audioFile, setAudioFile] = React.useState<{ file: File | null; preview: string | null }>({ file: null, preview: null });
+  const [videoResult, setVideoResult] = React.useState<string | null>(null);
+  const [submitting, setSubmitting] = React.useState(false);
+  const [toast, setToast] = React.useState<{ type: "success" | "error"; message: string } | null>(null);
+  const audioInputRef = React.useRef<HTMLInputElement>(null);
+
+  React.useEffect(() => {
+    if (pages.length > 0 && !selectedPage) setSelectedPage(pages[0]);
+  }, [pages, selectedPage]);
+
+  React.useEffect(() => {
+    if (!toast) return;
+    const t = setTimeout(() => setToast(null), 3000);
+    return () => clearTimeout(t);
+  }, [toast]);
+
+  const handleAudioChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0] ?? null;
+    if (!file) { setAudioFile({ file: null, preview: null }); return; }
+    setAudioFile({ file, preview: URL.createObjectURL(file) });
+  };
+
+  const toBase64 = (file: File): Promise<string> =>
+    new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(reader.result as string);
+      reader.onerror = reject;
+      reader.readAsDataURL(file);
+    });
+
+  const handleSubmit = async () => {
+    if (!selectedPage) { setToast({ type: "error", message: "Please select a page." }); return; }
+    const hasImage = imageUrls.some((u) => u.trim());
+    if (!hasImage && !audioFile.file) { setToast({ type: "error", message: "Please add at least one image URL or audio file." }); return; }
+    setSubmitting(true);
+    setVideoResult(null);
+    try {
+      const params = new URLSearchParams();
+      params.append("type", "vedio");
+      params.append("page", selectedPage);
+      imageUrls.forEach((url, i) => { if (url.trim()) params.append(`image_${i + 1}`, url.trim()); });
+      if (audioFile.file) {
+        const b64 = await toBase64(audioFile.file);
+        params.append("audio", b64);
+        params.append("audio_name", audioFile.file.name);
+      }
+      await fetch(MEDIA_WEBHOOK, { method: "POST", mode: "no-cors", body: params });
+      setToast({ type: "success", message: "Sent to n8n! Video will appear in preview when ready." });
+    } catch (err) {
+      setToast({ type: "error", message: err instanceof Error ? err.message : "Failed to reach n8n." });
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const filledImages = imageUrls.map((u, i) => ({ url: u.trim(), index: i })).filter((x) => x.url);
+
+  return (
+    <>
+      {toast && (
+        <motion.div initial={{ opacity: 0, y: -16 }} animate={{ opacity: 1, y: 0 }}
+          className={cn("fixed top-6 right-6 z-50 px-4 py-3 rounded-xl border text-sm shadow-xl backdrop-blur-sm",
+            toast.type === "success" ? "bg-emerald-500/20 border-emerald-500/35 text-emerald-200" : "bg-rose-500/20 border-rose-500/35 text-rose-200"
+          )}>
+          {toast.message}
+        </motion.div>
+      )}
+
+      <div className="grid grid-cols-1 xl:grid-cols-5 gap-6">
+
+        {/* ══ LEFT — form ══ */}
+        <div className="xl:col-span-3 space-y-4">
+
+          {/* Header banner */}
+          <div className="relative rounded-2xl overflow-hidden bg-gradient-to-br from-[#0d9488]/20 via-[#0a7a6e]/10 to-transparent border border-[#0d9488]/20 p-6">
+            <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_top_right,_#0d9488_0%,_transparent_60%)] opacity-10 pointer-events-none" />
+            <div className="flex items-center gap-3 mb-1">
+              <div className="h-9 w-9 rounded-xl bg-[#0d9488]/20 border border-[#0d9488]/30 flex items-center justify-center">
+                <svg className="h-5 w-5 text-[#0d9488]" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M15 10l4.553-2.069A1 1 0 0121 8.82v6.361a1 1 0 01-1.447.894L15 14M3 8a2 2 0 012-2h8a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2V8z" /></svg>
+              </div>
+              <div>
+                <h2 className="text-xl font-bold tracking-tight">Creative Media Studio</h2>
+                <p className="text-xs text-muted-foreground">Add images + audio → n8n builds your video</p>
+              </div>
+            </div>
+          </div>
+
+          {/* Page selector */}
+          <Card className="rounded-2xl border border-white/10 dark:bg-[#081328] p-5">
+            <p className="text-xs font-semibold text-muted-foreground uppercase tracking-widest mb-3">Target Page</p>
+            <div className="flex flex-wrap gap-2">
+              {pages.map((page) => (
+                <motion.button key={page} type="button" whileTap={{ scale: 0.96 }} onClick={() => setSelectedPage(page)}
+                  className={cn("px-4 py-2 rounded-xl border text-sm font-medium transition-all",
+                    selectedPage === page
+                      ? "border-[#0d9488] text-[#0d9488] bg-[#0d9488]/10 shadow-[0_0_12px_#0d948820]"
+                      : "border-border text-muted-foreground hover:border-[#0d9488]/40 hover:text-foreground"
+                  )}>
+                  {page}
+                </motion.button>
+              ))}
+            </div>
+          </Card>
+
+          {/* Image URLs */}
+          <Card className="rounded-2xl border border-white/10 dark:bg-[#081328] p-5 space-y-3">
+            <div className="flex items-center justify-between">
+              <p className="text-xs font-semibold text-muted-foreground uppercase tracking-widest">Image URLs</p>
+              <span className="text-xs text-[#0d9488] font-medium">{filledImages.length} / 7 added</span>
+            </div>
+            <div className="space-y-2">
+              {imageUrls.map((url, i) => (
+                <motion.div key={i} initial={{ opacity: 0, x: -8 }} animate={{ opacity: 1, x: 0 }} transition={{ delay: i * 0.04 }}
+                  className="flex items-center gap-3">
+                  <div className={cn("flex items-center justify-center h-8 w-8 rounded-lg text-xs font-bold shrink-0 transition-colors",
+                    url.trim() ? "bg-[#0d9488]/15 text-[#0d9488] border border-[#0d9488]/30" : "bg-muted/40 text-muted-foreground border border-border"
+                  )}>
+                    {i + 1}
+                  </div>
+                  <Input
+                    value={url}
+                    onChange={(e) => setImageUrls((prev) => prev.map((v, idx) => idx === i ? e.target.value : v))}
+                    placeholder={`Image ${i + 1} URL`}
+                    className="h-9 text-sm bg-background/40 border-border/60 focus:border-[#0d9488]/60"
+                  />
+                  <div className={cn("h-9 w-9 rounded-lg border shrink-0 overflow-hidden transition-all",
+                    url.trim() ? "border-[#0d9488]/30" : "border-dashed border-border/40 bg-muted/20"
+                  )}>
+                    {url.trim() ? (
+                      <img src={url} alt="" className="h-full w-full object-cover"
+                        onError={(e) => { (e.target as HTMLImageElement).style.opacity = "0.2"; }}
+                        onLoad={(e) => { (e.target as HTMLImageElement).style.opacity = "1"; }}
+                      />
+                    ) : (
+                      <div className="h-full w-full flex items-center justify-center">
+                        <svg className="h-3.5 w-3.5 text-muted-foreground/40" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14" /></svg>
+                      </div>
+                    )}
+                  </div>
+                </motion.div>
+              ))}
+            </div>
+          </Card>
+
+          {/* Audio upload */}
+          <Card className="rounded-2xl border border-white/10 dark:bg-[#081328] p-5 space-y-3">
+            <p className="text-xs font-semibold text-muted-foreground uppercase tracking-widest">Audio Track</p>
+            <input ref={audioInputRef} type="file" accept="audio/*" className="hidden" onChange={handleAudioChange} />
+            {audioFile.preview ? (
+              <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }}
+                className="rounded-xl border border-[#0d9488]/20 bg-[#0d9488]/5 p-4 space-y-3">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <div className="h-8 w-8 rounded-lg bg-[#0d9488]/20 flex items-center justify-center">
+                      <svg className="h-4 w-4 text-[#0d9488]" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 19V6l12-3v13M9 19c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zm12-3c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2z" /></svg>
+                    </div>
+                    <span className="text-sm font-medium truncate max-w-[160px]">{audioFile.file?.name}</span>
+                  </div>
+                  <button type="button" onClick={() => { setAudioFile({ file: null, preview: null }); if (audioInputRef.current) audioInputRef.current.value = ""; }}
+                    className="h-7 w-7 rounded-full bg-rose-500/15 text-rose-400 flex items-center justify-center hover:bg-rose-500/25 transition-colors">
+                    <X className="h-3.5 w-3.5" />
+                  </button>
+                </div>
+                <audio src={audioFile.preview} controls className="w-full" />
+              </motion.div>
+            ) : (
+              <motion.button type="button" whileHover={{ scale: 1.01 }} whileTap={{ scale: 0.99 }}
+                onClick={() => audioInputRef.current?.click()}
+                className="w-full h-24 rounded-xl border-2 border-dashed border-[#0d9488]/20 hover:border-[#0d9488]/50 bg-[#0d9488]/5 hover:bg-[#0d9488]/10 transition-all flex flex-col items-center justify-center gap-2 group">
+                <div className="h-10 w-10 rounded-full bg-[#0d9488]/15 group-hover:bg-[#0d9488]/25 transition-colors flex items-center justify-center">
+                  <svg className="h-5 w-5 text-[#0d9488]" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 19V6l12-3v13M9 19c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zm12-3c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2z" /></svg>
+                </div>
+                <span className="text-sm text-muted-foreground group-hover:text-foreground transition-colors">Drop audio or click to browse</span>
+              </motion.button>
+            )}
+          </Card>
+
+          {/* Submit */}
+          <motion.div whileHover={{ scale: 1.01 }} whileTap={{ scale: 0.99 }}>
+            <Button onClick={handleSubmit} disabled={submitting}
+              className="w-full h-12 rounded-xl bg-gradient-to-r from-[#0d9488] to-[#0f766e] hover:from-[#0f766e] hover:to-[#0d9488] text-white font-semibold text-sm shadow-lg shadow-[#0d9488]/20 transition-all">
+              {submitting ? (
+                <span className="flex items-center gap-2">
+                  <motion.span animate={{ rotate: 360 }} transition={{ duration: 1, repeat: Infinity, ease: "linear" }}
+                    className="h-4 w-4 rounded-full border-2 border-white border-t-transparent" />
+                  Sending to n8n...
+                </span>
+              ) : (
+                <span className="flex items-center gap-2">
+                  <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" /></svg>
+                  Generate Video with n8n
+                </span>
+              )}
+            </Button>
+          </motion.div>
+        </div>
+
+        {/* ══ RIGHT — live preview ══ */}
+        <div className="xl:col-span-2 sticky top-4 space-y-4">
+          <Card className="rounded-2xl border border-white/10 dark:bg-[#081328] overflow-hidden">
+            <div className="px-5 py-4 border-b border-white/10 flex items-center justify-between">
+              <h3 className="font-bold text-base">Live Preview</h3>
+              {filledImages.length > 0 && (
+                <span className="text-xs px-2 py-0.5 rounded-full bg-[#0d9488]/15 text-[#0d9488] border border-[#0d9488]/20 font-medium">
+                  {filledImages.length} image{filledImages.length > 1 ? "s" : ""}
+                </span>
+              )}
+            </div>
+
+            <div className="p-4 space-y-4">
+              {/* Video result */}
+              {videoResult ? (
+                <motion.div initial={{ opacity: 0, scale: 0.97 }} animate={{ opacity: 1, scale: 1 }} className="space-y-2">
+                  <div className="flex items-center gap-2">
+                    <span className="h-2 w-2 rounded-full bg-[#0d9488] animate-pulse" />
+                    <p className="text-xs text-[#0d9488] font-semibold uppercase tracking-wide">Video Ready</p>
+                  </div>
+                  <video src={videoResult} controls className="w-full rounded-xl border border-[#0d9488]/20" />
+                </motion.div>
+              ) : filledImages.length > 0 ? (
+                <div className="space-y-2">
+                  <p className="text-xs text-muted-foreground font-medium">Image Preview</p>
+                  <div className="grid grid-cols-3 gap-1.5">
+                    {filledImages.slice(0, 6).map(({ url, index }) => (
+                      <motion.div key={index} initial={{ opacity: 0, scale: 0.9 }} animate={{ opacity: 1, scale: 1 }} transition={{ delay: index * 0.05 }}
+                        className="aspect-square rounded-lg overflow-hidden border border-border/60">
+                        <img src={url} alt="" className="w-full h-full object-cover"
+                          onError={(e) => { (e.target as HTMLImageElement).style.opacity = "0.2"; }} />
+                      </motion.div>
+                    ))}
+                    {filledImages[6] && (
+                      <motion.div initial={{ opacity: 0, scale: 0.9 }} animate={{ opacity: 1, scale: 1 }} className="aspect-square rounded-lg overflow-hidden border border-border/60">
+                        <img src={filledImages[6].url} alt="" className="w-full h-full object-cover"
+                          onError={(e) => { (e.target as HTMLImageElement).style.opacity = "0.2"; }} />
+                      </motion.div>
+                    )}
+                  </div>
+                </div>
+              ) : (
+                <div className="flex flex-col items-center justify-center py-10 gap-3 text-center">
+                  <div className="h-14 w-14 rounded-2xl bg-muted/30 border border-dashed border-border flex items-center justify-center">
+                    <svg className="h-7 w-7 text-muted-foreground/40" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1} d="M15 10l4.553-2.069A1 1 0 0121 8.82v6.361a1 1 0 01-1.447.894L15 14M3 8a2 2 0 012-2h8a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2V8z" /></svg>
+                  </div>
+                  <p className="text-sm text-muted-foreground/60">Add image URLs to preview<br />Video appears here when n8n finishes</p>
+                </div>
+              )}
+
+              {/* Audio preview */}
+              {audioFile.preview && (
+                <motion.div initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} className="space-y-1.5">
+                  <p className="text-xs text-muted-foreground font-medium">Audio Track</p>
+                  <div className="rounded-xl bg-[#0d9488]/5 border border-[#0d9488]/15 p-2">
+                    <audio src={audioFile.preview} controls className="w-full" />
+                  </div>
+                </motion.div>
+              )}
+            </div>
+          </Card>
+
+        </div>
+
+      </div>
+    </>
+  );
+}
+
 function MediaUploadSlot({
   label, accept, icon, preview, onChange,
 }: {
@@ -1864,32 +2133,24 @@ function MediaUploadSlot({
 }
 
 function ComposePostPage({ initialTemplate }: { initialTemplate?: TemplateName }) {
-  const SCRIPT_URL = "https://script.google.com/macros/s/AKfycbwuZP1ETiVjr0_LCirp-sY1vLVXJ8p4P-3_z1grHxULRN-k2PuwqLlSxDpgqglo6Qf7Hw/exec";
+  const connConfig = useConnectionsConfig();
 
   const [selectedPage, setSelectedPage] = React.useState("");
   const [selectedTemplateObj, setSelectedTemplateObj] = React.useState<{ name: string; html: string } | null>(null);
   const [sheetTemplates, setSheetTemplates] = React.useState<Array<{ name: string; html: string }>>([]);
   const [headline, setHeadline] = React.useState("");
   const [caption, setCaption] = React.useState("");
+  const [orientation, setOrientation] = React.useState<"portrait" | "landscape">("portrait");
+  const [postImageUrl, setPostImageUrl] = React.useState("");
+  const [postImageFile, setPostImageFile] = React.useState<{ file: File | null; preview: string | null }>({ file: null, preview: null });
+  const postImageInputRef = React.useRef<HTMLInputElement>(null);
   const [isSubmitting, setIsSubmitting] = React.useState(false);
-  const [isMediaSubmitting, setIsMediaSubmitting] = React.useState(false);
   const [toast, setToast] = React.useState<{ type: "success" | "error"; message: string } | null>(null);
-
-  const [activeTab, setActiveTab] = React.useState<"post" | "media">("post");
-
-  // Media state — 5 images + audio (no video)
-  const [images, setImages] = React.useState<Array<{ file: File | null; preview: string | null }>>([
-    { file: null, preview: null },
-    { file: null, preview: null },
-    { file: null, preview: null },
-    { file: null, preview: null },
-    { file: null, preview: null },
-  ]);
-  const [audio, setAudio] = React.useState<{ file: File | null; preview: string | null }>({ file: null, preview: null });
 
   const { setQueue, syncData } = useSync();
   const previousPagesRef = React.useRef<string[]>([]);
-  const webhookUrl = import.meta.env.VITE_N8N_WEBHOOK_URL as string | undefined;
+  const SCRIPT_URL = connConfig.composeScriptUrl?.trim() || "https://script.google.com/macros/s/AKfycbwuZP1ETiVjr0_LCirp-sY1vLVXJ8p4P-3_z1grHxULRN-k2PuwqLlSxDpgqglo6Qf7Hw/exec";
+  const FORMS_WEBHOOK = connConfig.formsWebhookUrl?.trim() || (import.meta.env.VITE_N8N_FORMS_WEBHOOK_URL as string | undefined) || "https://n8n.kasunmadhuwantha.cv/webhook/forms";
 
   const pages = React.useMemo(() => {
     const dynamicPages = syncData.pages
@@ -1926,14 +2187,34 @@ function ComposePostPage({ initialTemplate }: { initialTemplate?: TemplateName }
 
   const submitPost = async () => {
     if (!selectedPage) { setToast({ type: "error", message: "Please select a page first." }); return; }
-    if (!headline.trim()) { setToast({ type: "error", message: "Headline is required." }); return; }
-    if (!caption.trim()) { setToast({ type: "error", message: "Caption is required." }); return; }
+    if (!headline.trim()) { setToast({ type: "error", message: "Title is required." }); return; }
     setIsSubmitting(true);
     try {
-      const payload = { page: selectedPage, template: selectedTemplateObj?.name ?? "", headline: headline.trim(), caption: caption.trim() };
-      if (webhookUrl) {
-        const res = await fetch(webhookUrl, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
-        if (!res.ok) throw new Error("Webhook failed");
+      if (postImageFile.file) {
+        // image_method = "file" — binary sent as multipart FormData
+        const fd = new FormData();
+        fd.append("type", "compose_post");
+        fd.append("image_method", "file");
+        fd.append("page", selectedPage);
+        fd.append("template", selectedTemplateObj?.name ?? "");
+        fd.append("title", headline.trim());
+        fd.append("description", caption.trim());
+        fd.append("orientation", orientation);
+        fd.append("image_url", "");
+        fd.append("image", postImageFile.file);
+        await fetch(FORMS_WEBHOOK, { method: "POST", mode: "no-cors", body: fd });
+      } else {
+        // image_method = "url" or "none" — use URLSearchParams (form-encoded) so n8n parses fields
+        const params = new URLSearchParams();
+        params.append("type", "compose_post");
+        params.append("image_method", postImageUrl.trim() ? "url" : "none");
+        params.append("page", selectedPage);
+        params.append("template", selectedTemplateObj?.name ?? "");
+        params.append("title", headline.trim());
+        params.append("description", caption.trim());
+        params.append("orientation", orientation);
+        params.append("image_url", postImageUrl.trim());
+        await fetch(FORMS_WEBHOOK, { method: "POST", mode: "no-cors", body: params });
       }
       setQueue((prev) => [{
         id: Date.now(), page: selectedPage, headline: headline.trim(), caption: caption.trim(),
@@ -1941,33 +2222,12 @@ function ComposePostPage({ initialTemplate }: { initialTemplate?: TemplateName }
         pageColor: selectedPage === "TrendWire Daily" ? "bg-cyan-400" : selectedPage === "Civic Pulse" ? "bg-violet-400" : "bg-emerald-400",
       }, ...prev]);
       setToast({ type: "success", message: "Post sent to queue." });
-      setHeadline(""); setCaption("");
+      setHeadline(""); setCaption(""); setPostImageUrl(""); setPostImageFile({ file: null, preview: null });
     } catch { setToast({ type: "error", message: "Failed to send post." }); }
     finally { setIsSubmitting(false); }
   };
 
-  const submitMedia = async () => {
-    const hasMedia = images.some((i) => i.file) || audio.file;
-    if (!hasMedia) { setToast({ type: "error", message: "Please add at least one media file." }); return; }
-    if (!selectedPage) { setToast({ type: "error", message: "Please select a page first." }); return; }
-    setIsMediaSubmitting(true);
-    try {
-      if (webhookUrl) {
-        const fd = new FormData();
-        fd.append("page", selectedPage);
-        images.forEach((img, i) => { if (img.file) fd.append(`image_${i + 1}`, img.file); });
-        if (audio.file) fd.append("audio", audio.file);
-        await fetch(webhookUrl, { method: "POST", body: fd });
-      }
-      setToast({ type: "success", message: "Media submitted successfully." });
-      setImages(Array.from({ length: 5 }, () => ({ file: null, preview: null })));
-      setAudio({ file: null, preview: null });
-    } catch { setToast({ type: "error", message: "Media submit failed." }); }
-    finally { setIsMediaSubmitting(false); }
-  };
-
   const imgIcon = <svg className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" /></svg>;
-  const audioIcon = <svg className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 19V6l12-3v13M9 19c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zm12-3c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2z" /></svg>;
 
   return (
     <>
@@ -1986,27 +2246,14 @@ function ComposePostPage({ initialTemplate }: { initialTemplate?: TemplateName }
 
           {/* Tab switcher */}
           <div className="flex border-b border-white/10">
-            {(["post", "media"] as const).map((tab) => (
-              <button
-                key={tab}
-                type="button"
-                onClick={() => setActiveTab(tab)}
-                className={cn(
-                  "flex-1 py-3.5 text-sm font-semibold transition-colors",
-                  activeTab === tab
-                    ? "text-[#0d9488] border-b-2 border-[#0d9488] bg-[#0d9488]/5"
-                    : "text-muted-foreground hover:text-foreground"
-                )}
-              >
-                {tab === "post" ? "Compose Post" : "Media Upload"}
-              </button>
-            ))}
+            <div className="flex-1 py-3.5 text-sm font-semibold text-[#0d9488] border-b-2 border-[#0d9488] bg-[#0d9488]/5 text-center">
+              Compose Post
+            </div>
           </div>
 
           <div className="p-5">
             {/* ── Post form ── */}
-            {activeTab === "post" && (
-              <div className="space-y-5">
+            <div className="space-y-5">
                 <div>
                   <Label className="mb-2 block">Select Page</Label>
                   <div className="flex flex-wrap gap-2">
@@ -2042,20 +2289,79 @@ function ComposePostPage({ initialTemplate }: { initialTemplate?: TemplateName }
 
                 <div>
                   <div className="flex items-center justify-between mb-2">
-                    <Label htmlFor="headline">Headline</Label>
+                    <Label htmlFor="headline">Title</Label>
                     <span className="text-xs text-muted-foreground">{headline.length}/80</span>
                   </div>
-                  <Input id="headline" value={headline} maxLength={80} onChange={(e) => setHeadline(e.target.value)} placeholder="Enter a strong headline" className="h-12" />
+                  <Input id="headline" value={headline} maxLength={80} onChange={(e) => setHeadline(e.target.value)} placeholder="Enter a strong title" className="h-12" />
                 </div>
 
                 <div>
                   <div className="flex items-center justify-between mb-2">
-                    <Label htmlFor="caption">Caption</Label>
+                    <Label htmlFor="caption">Description</Label>
                     <span className="text-xs text-muted-foreground">{caption.length}/300</span>
                   </div>
                   <textarea id="caption" rows={4} maxLength={300} value={caption} onChange={(e) => setCaption(e.target.value)}
                     className="w-full rounded-lg border border-input bg-background px-3 py-2 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring resize-none"
-                    placeholder="Write your caption..." />
+                    placeholder="Write your description..." />
+                </div>
+
+                {/* Image — URL or file upload */}
+                <div>
+                  <Label className="mb-2 block">Image</Label>
+                  <div className="space-y-2">
+                    <Input
+                      placeholder="Paste image URL..."
+                      value={postImageUrl}
+                      onChange={(e) => { setPostImageUrl(e.target.value); setPostImageFile({ file: null, preview: null }); if (postImageInputRef.current) postImageInputRef.current.value = ""; }}
+                      className="h-11"
+                    />
+                    <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                      <div className="flex-1 h-px bg-border" />
+                      <span>or</span>
+                      <div className="flex-1 h-px bg-border" />
+                    </div>
+                    <div
+                      className="relative flex items-center justify-center rounded-xl border-2 border-dashed border-border cursor-pointer hover:border-[#0d9488]/60 transition-colors overflow-hidden"
+                      style={{ minHeight: 80 }}
+                      onClick={() => postImageInputRef.current?.click()}
+                    >
+                      <input ref={postImageInputRef} type="file" accept="image/*" className="hidden"
+                        onChange={(e) => {
+                          const file = e.target.files?.[0] ?? null;
+                          if (file) { setPostImageFile({ file, preview: URL.createObjectURL(file) }); setPostImageUrl(""); }
+                        }}
+                      />
+                      {postImageFile.preview ? (
+                        <>
+                          <img src={postImageFile.preview} alt="upload" className="max-h-40 object-contain" />
+                          <button type="button" onClick={(ev) => { ev.stopPropagation(); setPostImageFile({ file: null, preview: null }); if (postImageInputRef.current) postImageInputRef.current.value = ""; }}
+                            className="absolute top-1.5 right-1.5 h-6 w-6 rounded-full bg-black/60 text-white flex items-center justify-center hover:bg-black/80">
+                            <X className="h-3 w-3" />
+                          </button>
+                        </>
+                      ) : (
+                        <div className="flex flex-col items-center gap-1 p-4 text-muted-foreground">
+                          {imgIcon}
+                          <span className="text-xs">Click to upload image</span>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </div>
+
+                <div>
+                  <Label className="mb-2 block">Image Orientation</Label>
+                  <div className="flex gap-3">
+                    {(["portrait", "landscape"] as const).map((opt) => (
+                      <button key={opt} type="button" onClick={() => setOrientation(opt)}
+                        className={cn("flex items-center gap-2 px-4 py-2.5 rounded-xl border text-sm font-medium transition-colors",
+                          orientation === opt ? "border-[#0d9488] text-[#0d9488] bg-[#0d9488]/10" : "border-border text-muted-foreground hover:text-foreground"
+                        )}>
+                        <span className={cn("inline-block border-2 rounded-sm border-current", opt === "portrait" ? "w-4 h-6" : "w-6 h-4")} />
+                        {opt.charAt(0).toUpperCase() + opt.slice(1)}
+                      </button>
+                    ))}
+                  </div>
                 </div>
 
                 <Button onClick={submitPost} disabled={isSubmitting} className="w-full h-11 bg-[#0d9488] hover:bg-[#0f766e] text-white">
@@ -2069,53 +2375,7 @@ function ComposePostPage({ initialTemplate }: { initialTemplate?: TemplateName }
                   )}
                 </Button>
               </div>
-            )}
 
-            {/* ── Media form ── */}
-            {activeTab === "media" && (
-              <div className="space-y-4">
-                {/* 5 images — 2+2+1 grid */}
-                <div>
-                  <Label className="mb-2 block text-xs text-muted-foreground uppercase tracking-wide">Images (5)</Label>
-                  <div className="grid grid-cols-2 gap-3">
-                    {images.slice(0, 4).map((img, i) => (
-                      <MediaUploadSlot key={i} label={`Image ${i + 1}`} accept="image/*" icon={imgIcon}
-                        preview={img.preview}
-                        onChange={(file, preview) => setImages((prev) => prev.map((it, idx) => idx === i ? { file, preview } : it))}
-                      />
-                    ))}
-                  </div>
-                  {/* 5th image — half width centered */}
-                  <div className="mt-3 grid grid-cols-2 gap-3">
-                    <MediaUploadSlot label="Image 5" accept="image/*" icon={imgIcon}
-                      preview={images[4].preview}
-                      onChange={(file, preview) => setImages((prev) => prev.map((it, idx) => idx === 4 ? { file, preview } : it))}
-                    />
-                    <div />
-                  </div>
-                </div>
-
-                {/* Audio */}
-                <div>
-                  <Label className="mb-2 block text-xs text-muted-foreground uppercase tracking-wide">Audio</Label>
-                  <MediaUploadSlot label="Click to upload audio" accept="audio/*" icon={audioIcon}
-                    preview={audio.preview}
-                    onChange={(file, preview) => setAudio({ file, preview })}
-                  />
-                </div>
-
-                <Button onClick={submitMedia} disabled={isMediaSubmitting} className="w-full h-11 bg-[#0d9488] hover:bg-[#0f766e] text-white">
-                  {isMediaSubmitting ? (
-                    <span className="flex items-center gap-2">
-                      <motion.span animate={{ rotate: 360 }} transition={{ duration: 1, repeat: Infinity, ease: "linear" }} className="h-4 w-4 rounded-full border-2 border-white border-t-transparent" />
-                      Uploading...
-                    </span>
-                  ) : (
-                    <span className="flex items-center gap-2">Submit Media <ChevronRight className="h-4 w-4" /></span>
-                  )}
-                </Button>
-              </div>
-            )}
           </div>
         </Card>
 
@@ -2138,8 +2398,9 @@ function ComposePostPage({ initialTemplate }: { initialTemplate?: TemplateName }
                 </div>
                 {selectedTemplateObj && <Badge className="border border-[#0d9488]/40 bg-[#0d9488]/15 text-[#2dd4bf]">{selectedTemplateObj.name}</Badge>}
               </div>
-              <p className="font-semibold text-base mb-2">{headline || "Your headline will appear here"}</p>
-              <p className="text-sm text-muted-foreground leading-6">{caption || "Your caption preview updates in real time while you type."}</p>
+              <p className="font-semibold text-base mb-2">{headline || "Your title will appear here"}</p>
+              <p className="text-sm text-muted-foreground leading-6">{caption || "Your description preview updates in real time while you type."}</p>
+              {orientation && <p className="text-xs text-[#0d9488] mt-2">Orientation: {orientation.charAt(0).toUpperCase() + orientation.slice(1)}</p>}
               <p className="text-xs text-muted-foreground mt-3 opacity-60">Select a template above to see the full HTML preview.</p>
             </div>
           )}
@@ -2253,7 +2514,8 @@ function TemplateEditor({
 }
 
 function TemplatesPage({ onUseTemplate }: { onUseTemplate: (template: TemplateName) => void }) {
-  const SCRIPT_URL = "https://script.google.com/macros/s/AKfycbwuZP1ETiVjr0_LCirp-sY1vLVXJ8p4P-3_z1grHxULRN-k2PuwqLlSxDpgqglo6Qf7Hw/exec";
+  const connConfig = useConnectionsConfig();
+  const SCRIPT_URL = connConfig.composeScriptUrl?.trim() || "https://script.google.com/macros/s/AKfycbwuZP1ETiVjr0_LCirp-sY1vLVXJ8p4P-3_z1grHxULRN-k2PuwqLlSxDpgqglo6Qf7Hw/exec";
 
   const [templates, setTemplates] = React.useState<TemplateItem[]>([]);
   const [loading, setLoading] = React.useState(true);
@@ -2497,7 +2759,8 @@ function MyPagesPage() {
   const [fetchError, setFetchError] = React.useState<string | null>(null);
   const [submissionLog, setSubmissionLog] = React.useState<PageStorageSubmission[]>([]);
 
-  const APPS_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbz5HtEOSeVhzjnPXEVistZ6jcrXogHL7V1jLk_zGKo5CCDMl5aVcGyIGhRCviVNfEI/exec";
+  const connConfig = useConnectionsConfig();
+  const APPS_SCRIPT_URL = connConfig.pagesScriptUrl?.trim() || "https://script.google.com/macros/s/AKfycbz5HtEOSeVhzjnPXEVistZ6jcrXogHL7V1jLk_zGKo5CCDMl5aVcGyIGhRCviVNfEI/exec";
 
   const pushSubmissionLog = React.useCallback((entry: PageStorageSubmission) => {
     setSubmissionLog((prev) => {
@@ -3713,20 +3976,153 @@ function PageAnalyticsPage() {
   );
 }
 
+function ConnFieldRow({
+  label, value, envVal, secret = false, testable = false,
+  placeholder = "", onChange, onTest, testState = "idle",
+}: {
+  label: string;
+  value: string;
+  envVal: string;
+  secret?: boolean;
+  testable?: boolean;
+  placeholder?: string;
+  onChange: (v: string) => void;
+  onTest?: () => void;
+  testState?: "idle" | "ok" | "fail" | "loading";
+}) {
+  const [editing, setEditing] = React.useState(false);
+  const [draft, setDraft] = React.useState("");
+  const [reveal, setReveal] = React.useState(false);
+
+  const src: "env" | "custom" | "empty" = !value ? "empty" : (envVal && value === envVal ? "env" : "custom");
+  const hasEnv = !!envVal;
+
+  const startEdit = () => { setDraft(value); setEditing(true); };
+  const cancelEdit = () => { setEditing(false); setReveal(false); };
+  const confirmEdit = () => { onChange(draft); setEditing(false); setReveal(false); };
+  const resetEnv = () => { onChange(envVal); setEditing(false); setReveal(false); };
+
+  const masked = (v: string) => (v ? "•".repeat(Math.min(v.length, 40)) : "");
+
+  const Badge = () => {
+    if (src === "env") return <span className="shrink-0 text-[10px] font-bold px-1.5 py-0.5 rounded border border-emerald-500/40 bg-emerald-500/15 text-emerald-400">ENV</span>;
+    if (src === "custom") return <span className="shrink-0 text-[10px] font-bold px-1.5 py-0.5 rounded border border-amber-500/40 bg-amber-500/15 text-amber-400">CUSTOM</span>;
+    return <span className="shrink-0 text-[10px] font-bold px-1.5 py-0.5 rounded border border-slate-500/40 bg-slate-500/10 text-slate-500">EMPTY</span>;
+  };
+
+  const StatusIcon = () => {
+    if (testState === "ok") return <CheckCircle2 className="h-4 w-4 text-emerald-400 shrink-0" />;
+    if (testState === "fail") return <X className="h-4 w-4 text-rose-400 shrink-0" />;
+    if (testState === "loading") return <RefreshCcw className="h-4 w-4 animate-spin text-sky-300 shrink-0" />;
+    return null;
+  };
+
+  return (
+    <div className={cn("rounded-xl border px-4 py-3 transition-all", editing ? "border-[#0d9488]/60 bg-[#0d9488]/5" : "border-white/8 hover:border-white/20")}>
+      <div className="flex items-center justify-between gap-2">
+        <div className="flex items-center gap-2 min-w-0 flex-1">
+          <span className="text-sm font-semibold shrink-0">{label}</span>
+          <Badge />
+        </div>
+        {!editing && (
+          <div className="flex items-center gap-1 shrink-0">
+            {testable && value && onTest && (
+              <>
+                <Button variant="ghost" size="sm" className="h-7 px-2 text-xs text-muted-foreground hover:text-foreground" onClick={onTest}>Test</Button>
+                <StatusIcon />
+              </>
+            )}
+            <Button variant="ghost" size="sm" className="h-7 px-2 text-xs gap-1 text-sky-400 hover:text-sky-300 hover:bg-sky-400/10" onClick={startEdit}>
+              <SlidersHorizontal className="h-3 w-3" /> Edit
+            </Button>
+          </div>
+        )}
+      </div>
+
+      {!editing && (
+        <div className="mt-1 flex items-center gap-2">
+          {value ? (
+            secret ? (
+              <div className="flex items-center gap-1.5">
+                <span className="font-mono text-xs text-foreground/55 tracking-wider">{reveal ? value : masked(value)}</span>
+                <button type="button" onClick={() => setReveal((p) => !p)} className="text-muted-foreground hover:text-foreground">
+                  {reveal ? <EyeOff className="h-3.5 w-3.5" /> : <Eye className="h-3.5 w-3.5" />}
+                </button>
+              </div>
+            ) : (
+              <span className="font-mono text-xs text-foreground/55 break-all">{value}</span>
+            )
+          ) : (
+            <span className="text-xs text-muted-foreground italic">{hasEnv ? "Loaded from .env" : "Not set"}</span>
+          )}
+        </div>
+      )}
+
+      {editing && (
+        <div className="mt-2 space-y-2">
+          <div className="flex items-center gap-2">
+            <div className="relative flex-1">
+              <Input
+                autoFocus
+                type={secret && !reveal ? "password" : "text"}
+                placeholder={placeholder || (hasEnv ? "Paste new value or leave blank to use .env" : "Enter value…")}
+                value={draft}
+                onChange={(e) => setDraft(e.target.value)}
+                onKeyDown={(e) => { if (e.key === "Enter") confirmEdit(); if (e.key === "Escape") cancelEdit(); }}
+                className="font-mono text-xs h-9 pr-8"
+              />
+              {secret && (
+                <button type="button" onClick={() => setReveal((p) => !p)} className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground">
+                  {reveal ? <EyeOff className="h-3.5 w-3.5" /> : <Eye className="h-3.5 w-3.5" />}
+                </button>
+              )}
+            </div>
+            <Button size="sm" className="h-9 px-3 bg-[#0d9488] hover:bg-[#0f766e] text-white shrink-0" onClick={confirmEdit}>
+              <Check className="h-3.5 w-3.5" />
+            </Button>
+            <Button size="sm" variant="ghost" className="h-9 px-2 shrink-0 text-muted-foreground hover:text-foreground" onClick={cancelEdit}>
+              <X className="h-3.5 w-3.5" />
+            </Button>
+          </div>
+          {hasEnv && src !== "env" && (
+            <button type="button" onClick={resetEnv} className="text-[10px] text-sky-400 hover:underline">
+              Reset to ENV value
+            </button>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function ConnectionsPage() {
+  const envVars: Partial<Record<keyof ConnectionsConfig, string>> = {
+    n8nApiKey: String(import.meta.env.VITE_N8N_API_KEY ?? ""),
+    formsWebhookUrl: String(import.meta.env.VITE_N8N_FORMS_WEBHOOK_URL ?? ""),
+    syncWebhook: String(import.meta.env.VITE_N8N_PAGE_WEBHOOK_URL ?? ""),
+    baseWebhookUrl: String(import.meta.env.VITE_VERIFY_WEBHOOK_URL ?? ""),
+    sheetDeploymentId: String(import.meta.env.VITE_GSHEET_SCRIPT_ID ?? ""),
+    sheetWebAppUrl: String(import.meta.env.VITE_GSHEET_WEB_APP_URL ?? ""),
+    composeScriptUrl: String(import.meta.env.VITE_GSHEET_URL ?? ""),
+  };
+
   const [config, setConfig] = React.useState<ConnectionsConfig>(() => {
-    const saved = localStorage.getItem("connections-config");
-    if (!saved) return defaultConnections;
     try {
-      return { ...defaultConnections, ...(JSON.parse(saved) as Partial<ConnectionsConfig>) };
+      const raw = localStorage.getItem("connections-config");
+      const saved: Partial<ConnectionsConfig> = raw ? JSON.parse(raw) : {};
+      const merged = { ...defaultConnections };
+      (Object.keys(defaultConnections) as Array<keyof ConnectionsConfig>).forEach((k) => {
+        const savedVal = saved[k] as string | undefined;
+        const envVal = (envVars[k] ?? "") as string;
+        (merged as Record<string, unknown>)[k] = savedVal !== undefined && savedVal !== "" ? savedVal : envVal;
+      });
+      return merged;
     } catch {
-      return defaultConnections;
+      return { ...defaultConnections };
     }
   });
-  const [showToken, setShowToken] = React.useState<Record<string, boolean>>({});
+
   const [testStates, setTestStates] = React.useState<Record<string, "idle" | "ok" | "fail" | "loading">>({});
-  const [sheetRows, setSheetRows] = React.useState<number | null>(null);
-  const [sheetTestMessage, setSheetTestMessage] = React.useState<string>("");
   const [savedToast, setSavedToast] = React.useState(false);
 
   React.useEffect(() => {
@@ -3735,260 +4131,101 @@ function ConnectionsPage() {
     return () => clearTimeout(t);
   }, [savedToast]);
 
-  const setTestState = (key: string, state: "idle" | "ok" | "fail" | "loading") => {
-    setTestStates((prev) => ({ ...prev, [key]: state }));
+  const setField = (field: keyof ConnectionsConfig, value: string) => {
+    setConfig((prev) => ({ ...prev, [field]: value }));
   };
 
   const ping = async (url: string, key: string) => {
-    if (!url) {
-      setTestState(key, "fail");
-      return;
-    }
-    setTestState(key, "loading");
+    if (!url) { setTestStates((p) => ({ ...p, [key]: "fail" })); return; }
+    setTestStates((p) => ({ ...p, [key]: "loading" }));
     try {
-      const res = await fetch(url, { method: "GET" });
-      setTestState(key, res.ok ? "ok" : "fail");
+      await fetch(url, { method: "GET", mode: "no-cors" });
+      setTestStates((p) => ({ ...p, [key]: "ok" }));
     } catch {
-      setTestState(key, "fail");
-    }
-  };
-
-  const buildSheetWebAppUrl = React.useCallback(() => {
-    const directUrl = config.sheetWebAppUrl.trim();
-    if (directUrl) return directUrl;
-
-    const deploymentId = config.sheetDeploymentId.trim();
-    if (!deploymentId) return "";
-
-    return `https://script.google.com/macros/s/${deploymentId}/exec`;
-  }, [config.sheetDeploymentId, config.sheetWebAppUrl]);
-
-  const countRowsFromSheetPayload = (payload: unknown): number | null => {
-    if (Array.isArray(payload)) return payload.length;
-    if (!payload || typeof payload !== "object") return null;
-
-    const parsed = payload as { rows?: unknown; data?: unknown; items?: unknown };
-    if (Array.isArray(parsed.rows)) return parsed.rows.length;
-    if (Array.isArray(parsed.data)) return parsed.data.length;
-    if (Array.isArray(parsed.items)) return parsed.items.length;
-    return null;
-  };
-
-  const isValidGoogleAppsScriptUrl = (value: string): boolean => {
-    return /^https:\/\/script\.google\.com\/macros\/s\/[^/]+\/exec(?:[?#].*)?$/i.test(value.trim());
-  };
-
-  const extractDeploymentIdFromUrl = (value: string): string => {
-    const match = value.trim().match(/\/macros\/s\/([^/]+)\/exec/i);
-    return match?.[1] ?? "";
-  };
-
-  const testSheet = async () => {
-    const fallbackUrl = import.meta.env.VITE_GSHEET_WEB_APP_URL || import.meta.env.VITE_GSHEET_API_URL || "";
-    const url = buildSheetWebAppUrl() || fallbackUrl;
-    if (!url) {
-      setSheetRows(null);
-      setSheetTestMessage("Add a Deployment ID or Web App URL first.");
-      setTestState("sheet", "fail");
-      return;
-    }
-
-    if (!isValidGoogleAppsScriptUrl(url)) {
-      setSheetRows(null);
-      setSheetTestMessage("Use a valid Google Apps Script Web App URL ending with /exec.");
-      setTestState("sheet", "fail");
-      return;
-    }
-
-    const enteredDeploymentId = config.sheetDeploymentId.trim();
-    const deploymentIdFromUrl = extractDeploymentIdFromUrl(url);
-    if (enteredDeploymentId && deploymentIdFromUrl && enteredDeploymentId !== deploymentIdFromUrl) {
-      setSheetRows(null);
-      setSheetTestMessage("Deployment ID does not match the Web App URL.");
-      setTestState("sheet", "fail");
-      return;
-    }
-
-    setSheetRows(null);
-    setSheetTestMessage("");
-    setTestState("sheet", "loading");
-    try {
-      const res = await fetch(url, { method: "GET" });
-      if (!res.ok) {
-        setSheetRows(null);
-        setSheetTestMessage(`Web app returned ${res.status}.`);
-        setTestState("sheet", "fail");
-        return;
-      }
-
-      let payload: unknown = null;
-      try {
-        payload = await res.json();
-      } catch {
-        payload = await res.text();
-      }
-
-      const count = countRowsFromSheetPayload(payload);
-      setSheetRows(count);
-      setSheetTestMessage(count !== null ? `Connected. ${count} rows accessible.` : "Connected to Google Apps Script web app.");
-      setTestState("sheet", "ok");
-    } catch {
-      try {
-        await fetch(url, { method: "GET", mode: "no-cors" });
-        setSheetRows(null);
-        setSheetTestMessage("Connected (CORS-restricted response in browser). Web app is reachable.");
-        setTestState("sheet", "ok");
-      } catch {
-        setSheetRows(null);
-        setSheetTestMessage("Cannot reach Google Apps Script web app. Check deployment access and URL.");
-        setTestState("sheet", "fail");
-      }
+      setTestStates((p) => ({ ...p, [key]: "fail" }));
     }
   };
 
   const saveConfig = () => {
-    localStorage.setItem("connections-config", JSON.stringify(config));
+    const overrides: Partial<ConnectionsConfig> = {};
+    (Object.keys(defaultConnections) as Array<keyof ConnectionsConfig>).forEach((k) => {
+      const val = config[k] as string;
+      const envVal = (envVars[k] ?? "") as string;
+      if (val !== envVal && val !== "") (overrides as Record<string, unknown>)[k] = val;
+    });
+    localStorage.setItem("connections-config", JSON.stringify(overrides));
     window.dispatchEvent(new Event(CONNECTIONS_CONFIG_UPDATED_EVENT));
     setSavedToast(true);
   };
 
-  const statusIcon = (state: "idle" | "ok" | "fail" | "loading") => {
-    if (state === "ok") return <CheckCircle2 className="h-4 w-4 text-emerald-400" />;
-    if (state === "fail") return <X className="h-4 w-4 text-rose-400" />;
-    if (state === "loading") return <RefreshCcw className="h-4 w-4 animate-spin text-sky-300" />;
-    return null;
-  };
+  const row = (field: keyof ConnectionsConfig, label: string, opts: { secret?: boolean; testable?: boolean; placeholder?: string } = {}) => (
+    <ConnFieldRow
+      key={field}
+      label={label}
+      value={config[field] as string}
+      envVal={(envVars[field] ?? "") as string}
+      secret={opts.secret}
+      testable={opts.testable}
+      placeholder={opts.placeholder}
+      onChange={(v) => setField(field, v)}
+      onTest={opts.testable ? () => ping(config[field] as string, field) : undefined}
+      testState={testStates[field] ?? "idle"}
+    />
+  );
 
   return (
-    <div className="space-y-6 pb-24">
+    <div className="space-y-5 pb-28">
       {savedToast && (
-        <motion.div initial={{ opacity: 0, y: -8 }} animate={{ opacity: 1, y: 0 }} className="fixed top-6 right-6 z-50 px-4 py-2 rounded-lg border border-emerald-500/35 bg-emerald-500/20 text-emerald-200 text-sm">
-          Settings saved successfully.
+        <motion.div initial={{ opacity: 0, y: -8 }} animate={{ opacity: 1, y: 0 }} className="fixed top-6 right-6 z-50 px-4 py-2 rounded-lg border border-emerald-500/35 bg-emerald-500/20 text-emerald-200 text-sm shadow-lg">
+          Connections saved.
         </motion.div>
       )}
 
-      <h2 className="text-2xl font-black tracking-tight">Connections</h2>
+      <div className="flex items-center justify-between">
+        <h2 className="text-2xl font-black tracking-tight">Connections</h2>
+        <div className="flex items-center gap-3 text-xs text-muted-foreground">
+          <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-emerald-400 inline-block" /> ENV = from .env file</span>
+          <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-amber-400 inline-block" /> CUSTOM = manually set</span>
+        </div>
+      </div>
 
-      <Card className="p-5 rounded-2xl border border-white/10 bg-white/95 dark:bg-[#081328] space-y-4">
-        <h3 className="text-lg font-bold">Facebook</h3>
-        {Object.keys(config.facebookTokens).map((pageName) => (
-          <div key={pageName} className="grid grid-cols-1 lg:grid-cols-[220px,1fr,140px,24px] gap-2 items-center">
-            <p className="text-sm font-medium">{pageName}</p>
-            <div className="relative">
-              <Input
-                type={showToken[pageName] ? "text" : "password"}
-                value={config.facebookTokens[pageName]}
-                onChange={(e) =>
-                  setConfig((prev) => ({ ...prev, facebookTokens: { ...prev.facebookTokens, [pageName]: e.target.value } }))
-                }
-              />
-              <button type="button" onClick={() => setShowToken((prev) => ({ ...prev, [pageName]: !prev[pageName] }))} className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground">
-                {showToken[pageName] ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
-              </button>
-            </div>
-            <Button className="bg-[#0d9488] hover:bg-[#0f766e] text-white" onClick={() => ping(config.baseWebhookUrl || import.meta.env.VITE_N8N_WEBHOOK_URL || "", `fb-${pageName}`)}>
-              Test Connection
-            </Button>
-            <div>{statusIcon(testStates[`fb-${pageName}`] ?? "idle")}</div>
-          </div>
-        ))}
-      </Card>
-
+      {/* n8n API */}
       <Card className="p-5 rounded-2xl border border-white/10 bg-white/95 dark:bg-[#081328] space-y-3">
-        <h3 className="text-lg font-bold">n8n Webhooks</h3>
-        {[
-          { key: "baseWebhookUrl", label: "Base Webhook URL" },
-          { key: "postWebhook", label: "Post Webhook" },
-          { key: "syncWebhook", label: "Sync Webhook" },
-          { key: "automationWebhook", label: "Stop/Start Automation Webhook" },
-        ].map((field) => (
-          <div key={field.key} className="grid grid-cols-1 lg:grid-cols-[220px,1fr,90px,24px] gap-2 items-center">
-            <p className="text-sm font-medium">{field.label}</p>
-            <Input
-              value={config[field.key as keyof ConnectionsConfig] as string}
-              onChange={(e) => setConfig((prev) => ({ ...prev, [field.key]: e.target.value }))}
-            />
-            <Button variant="outline" onClick={() => ping(config[field.key as keyof ConnectionsConfig] as string, field.key)}>Test</Button>
-            <div>{statusIcon(testStates[field.key] ?? "idle")}</div>
-          </div>
-        ))}
-
-        <div className="grid grid-cols-1 lg:grid-cols-[220px,1fr] gap-2 items-center pt-2">
-          <p className="text-sm font-medium">n8n API Base URL</p>
-          <Input
-            placeholder="https://n8n.example.com/api/v1"
-            value={config.n8nApiBaseUrl}
-            onChange={(e) => setConfig((prev) => ({ ...prev, n8nApiBaseUrl: e.target.value }))}
-          />
+        <div className="flex items-center gap-2 pb-1 border-b border-white/10">
+          <Zap className="h-4 w-4 text-[#0d9488]" />
+          <h3 className="text-base font-bold">n8n API</h3>
         </div>
-        <div className="grid grid-cols-1 lg:grid-cols-[220px,1fr] gap-2 items-center">
-          <p className="text-sm font-medium">n8n API Key</p>
-          <Input
-            type="password"
-            placeholder="Paste n8n Public API key"
-            value={config.n8nApiKey}
-            onChange={(e) => setConfig((prev) => ({ ...prev, n8nApiKey: e.target.value }))}
-          />
-        </div>
+        {row("n8nApiKey", "API Key", { secret: true, placeholder: "Paste n8n Public API key" })}
+        {row("n8nApiBaseUrl", "API Base URL", { testable: true, placeholder: "https://n8n.example.com/api/v1" })}
       </Card>
 
+      {/* n8n Webhooks */}
       <Card className="p-5 rounded-2xl border border-white/10 bg-white/95 dark:bg-[#081328] space-y-3">
-        <h3 className="text-lg font-bold">Google Sheets</h3>
-        <div className="grid grid-cols-1 lg:grid-cols-[220px,1fr] gap-2 items-center">
-          <p className="text-sm font-medium">Deployment ID</p>
-          <Input
-            placeholder="AKfyc..."
-            value={config.sheetDeploymentId}
-            onChange={(e) => setConfig((prev) => ({ ...prev, sheetDeploymentId: e.target.value }))}
-          />
+        <div className="flex items-center gap-2 pb-1 border-b border-white/10">
+          <GitBranch className="h-4 w-4 text-[#0d9488]" />
+          <h3 className="text-base font-bold">n8n Webhooks</h3>
         </div>
-        <div className="grid grid-cols-1 lg:grid-cols-[220px,1fr] gap-2 items-center">
-          <p className="text-sm font-medium">Web App URL</p>
-          <Input
-            placeholder="https://script.google.com/macros/s/.../exec"
-            value={config.sheetWebAppUrl}
-            onChange={(e) => setConfig((prev) => ({ ...prev, sheetWebAppUrl: e.target.value }))}
-          />
-        </div>
-        <div className="flex items-center gap-3">
-          <Button className="bg-[#0d9488] hover:bg-[#0f766e] text-white" onClick={testSheet}>Test Sheet Access</Button>
-          {statusIcon(testStates.sheet ?? "idle")}
-          {!!sheetTestMessage && (
-            <p className={cn("text-sm", testStates.sheet === "fail" ? "text-rose-300" : "text-muted-foreground")}>{sheetTestMessage}</p>
-          )}
-        </div>
+        {row("formsWebhookUrl", "Forms Webhook URL", { testable: true })}
+        {row("syncWebhook", "Page Data Webhook URL", { testable: true })}
+        {row("baseWebhookUrl", "Verify Webhook URL", { testable: true })}
+        {row("mediaWebhookUrl", "Media Upload Webhook URL", { testable: true })}
       </Card>
 
-      <Card className="p-5 rounded-2xl border border-white/10 bg-white/95 dark:bg-[#081328] space-y-4">
-        <h3 className="text-lg font-bold">Sync Settings</h3>
-        <div className="grid grid-cols-1 lg:grid-cols-[220px,1fr] gap-2 items-center">
-          <p className="text-sm font-medium">Auto-sync every X seconds</p>
-          <Input
-            type="number"
-            min={5}
-            value={config.autoSyncSeconds}
-            onChange={(e) => setConfig((prev) => ({ ...prev, autoSyncSeconds: Number(e.target.value || 30) }))}
-          />
+      {/* Google Sheets */}
+      <Card className="p-5 rounded-2xl border border-white/10 bg-white/95 dark:bg-[#081328] space-y-3">
+        <div className="flex items-center gap-2 pb-1 border-b border-white/10">
+          <FileText className="h-4 w-4 text-[#0d9488]" />
+          <h3 className="text-base font-bold">Google Sheets</h3>
         </div>
-
-        <div className="flex items-center justify-between rounded-lg border border-white/10 p-3">
-          <p className="text-sm font-medium">Enable real-time queue sync</p>
-          <button type="button" onClick={() => setConfig((prev) => ({ ...prev, realTimeQueueSync: !prev.realTimeQueueSync }))} className={cn("w-12 h-6 rounded-full p-1 transition-colors", config.realTimeQueueSync ? "bg-[#0d9488]" : "bg-slate-600")}>
-            <span className={cn("block h-4 w-4 rounded-full bg-white transition-transform", config.realTimeQueueSync ? "translate-x-6" : "translate-x-0")} />
-          </button>
-        </div>
-
-        <div className="flex items-center justify-between rounded-lg border border-white/10 p-3">
-          <p className="text-sm font-medium">Send Telegram alerts on failure</p>
-          <button type="button" onClick={() => setConfig((prev) => ({ ...prev, telegramAlerts: !prev.telegramAlerts }))} className={cn("w-12 h-6 rounded-full p-1 transition-colors", config.telegramAlerts ? "bg-[#0d9488]" : "bg-slate-600")}>
-            <span className={cn("block h-4 w-4 rounded-full bg-white transition-transform", config.telegramAlerts ? "translate-x-6" : "translate-x-0")} />
-          </button>
-        </div>
+        {row("sheetDeploymentId", "Script Deployment ID", { placeholder: "AKfyc…" })}
+        {row("sheetWebAppUrl", "Web App URL", { testable: true, placeholder: "https://script.google.com/macros/s/…/exec" })}
+        {row("composeScriptUrl", "Compose & Templates Script URL", { testable: true, placeholder: "https://script.google.com/macros/s/…/exec" })}
+        {row("pagesScriptUrl", "Pages Script URL", { testable: true, placeholder: "https://script.google.com/macros/s/…/exec" })}
       </Card>
 
       <div className="fixed bottom-0 left-0 right-0 p-4 bg-background/95 backdrop-blur border-t border-white/10 z-40">
         <div className="max-w-7xl mx-auto">
-          <Button onClick={saveConfig} className="w-full h-11 bg-[#0d9488] hover:bg-[#0f766e] text-white">Save Connections</Button>
+          <Button onClick={saveConfig} className="w-full h-11 bg-[#0d9488] hover:bg-[#0f766e] text-white font-semibold">Save Connections</Button>
         </div>
       </div>
     </div>
@@ -4379,6 +4616,8 @@ const EmailMarketingDashboard: React.FC = () => {
         return <ContentQueuePage />;
       case "Compose Post":
         return <ComposePostPage initialTemplate={composeTemplateSeed} />;
+      case "Media Upload":
+        return <MediaUploadPage />;
       case "Templates":
         return <TemplatesPage onUseTemplate={openComposeWithTemplate} />;
       case "Schedulers":
