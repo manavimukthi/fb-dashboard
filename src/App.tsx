@@ -473,16 +473,16 @@ const useConnectionsConfig = (): Partial<ConnectionsConfig> => {
 };
 
 const resolveN8nApiConfig = (savedConfig: Partial<ConnectionsConfig> = getSavedConnectionsConfig()): { apiBaseUrls: string[]; apiKey: string } => {
-
+  // Saved connections page value takes priority over .env so users can override from the UI
   const apiKey = String(
-    import.meta.env.VITE_N8N_API_KEY ??
-      import.meta.env.VITE_N8N_PUBLIC_API_KEY ??
-      savedConfig.n8nApiKey ??
-      ""
+    savedConfig.n8nApiKey ||
+    import.meta.env.VITE_N8N_API_KEY ||
+    import.meta.env.VITE_N8N_PUBLIC_API_KEY ||
+    ""
   ).trim();
 
-  const envBase = String(import.meta.env.VITE_N8N_BASE_URL ?? "").trim();
   const savedBase = String(savedConfig.n8nApiBaseUrl ?? "").trim();
+  const envBase = String(import.meta.env.VITE_N8N_BASE_URL ?? "").trim();
 
   const directBaseCandidates = [savedBase, envBase, DEFAULT_N8N_API_BASE_URL]
     .filter((value, index, array) => value.length > 0 && array.indexOf(value) === index)
@@ -492,12 +492,9 @@ const resolveN8nApiConfig = (savedConfig: Partial<ConnectionsConfig> = getSavedC
 
   const apiBaseUrls = import.meta.env.DEV
     ? [proxyBase, "/n8n-api", ...directBaseCandidates]
-    : [proxyBase, ...directBaseCandidates];
+    : [...directBaseCandidates, proxyBase];
 
-  return {
-    apiBaseUrls,
-    apiKey,
-  };
+  return { apiBaseUrls, apiKey };
 };
 
 const fetchWithTimeout = async (input: RequestInfo | URL, init?: RequestInit, timeoutMs = 12000): Promise<Response> => {
