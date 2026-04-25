@@ -2143,6 +2143,11 @@ function ComposePostPage({ initialTemplate }: { initialTemplate?: TemplateName }
   const postImageInputRef = React.useRef<HTMLInputElement>(null);
   const [isSubmitting, setIsSubmitting] = React.useState(false);
   const [toast, setToast] = React.useState<{ type: "success" | "error"; message: string } | null>(null);
+  const [submittedPost, setSubmittedPost] = React.useState<{
+    page: string; headline: string; caption: string; orientation: string;
+    imagePreview: string | null; templateHtml: string | null; templateName: string | null;
+    postUrl: string | null; postId: string | null; sentAt: string;
+  } | null>(null);
 
   const { setQueue, syncData } = useSync();
   const previousPagesRef = React.useRef<string[]>([]);
@@ -2187,32 +2192,63 @@ function ComposePostPage({ initialTemplate }: { initialTemplate?: TemplateName }
     if (!headline.trim()) { setToast({ type: "error", message: "Title is required." }); return; }
     setIsSubmitting(true);
     try {
-      if (postImageFile.file) {
-        // image_method = "file" — binary sent as multipart FormData
-        const fd = new FormData();
-        fd.append("type", "compose_post");
-        fd.append("image_method", "file");
-        fd.append("page", selectedPage);
-        fd.append("template", selectedTemplateObj?.name ?? "");
-        fd.append("title", headline.trim());
-        fd.append("description", caption.trim());
-        fd.append("orientation", orientation);
-        fd.append("image_url", "");
-        fd.append("image", postImageFile.file);
-        await fetch(FORMS_WEBHOOK, { method: "POST", mode: "no-cors", body: fd });
-      } else {
-        // image_method = "url" or "none" — use URLSearchParams (form-encoded) so n8n parses fields
-        const params = new URLSearchParams();
-        params.append("type", "compose_post");
-        params.append("image_method", postImageUrl.trim() ? "url" : "none");
-        params.append("page", selectedPage);
-        params.append("template", selectedTemplateObj?.name ?? "");
-        params.append("title", headline.trim());
-        params.append("description", caption.trim());
-        params.append("orientation", orientation);
-        params.append("image_url", postImageUrl.trim());
-        await fetch(FORMS_WEBHOOK, { method: "POST", mode: "no-cors", body: params });
-      }
+      let n8nResult: { status?: string; page?: string; title?: string; description?: string; image_url?: string; post_id?: string; post_url?: string } | null = null;
+      try {
+        let res: Response;
+        if (postImageFile.file) {
+          const fd = new FormData();
+          fd.append("type", "compose_post");
+          fd.append("image_method", "file");
+          fd.append("page", selectedPage);
+          fd.append("template", selectedTemplateObj?.name ?? "");
+          fd.append("title", headline.trim());
+          fd.append("description", caption.trim());
+          fd.append("orientation", orientation);
+          fd.append("image_url", "");
+          fd.append("image", postImageFile.file);
+          res = await fetch(FORMS_WEBHOOK, { method: "POST", body: fd });
+        } else {
+          const params = new URLSearchParams();
+          params.append("type", "compose_post");
+          params.append("image_method", postImageUrl.trim() ? "url" : "none");
+          params.append("page", selectedPage);
+          params.append("template", selectedTemplateObj?.name ?? "");
+          params.append("title", headline.trim());
+          params.append("description", caption.trim());
+          params.append("orientation", orientation);
+          params.append("image_url", postImageUrl.trim());
+          res = await fetch(FORMS_WEBHOOK, { method: "POST", body: params });
+        }
+        if (res.ok) {
+          try {
+            const raw = await res.json();
+            // n8n "First Incoming Item" wraps in array or returns object directly
+            const item = Array.isArray(raw) ? raw[0] : raw;
+            // The Respond to Webhook node outputs the field named "POST" which holds the image URL
+            n8nResult = {
+              image_url: item?.POST || item?.post || item?.image_url || item?.imageUrl || null,
+              post_url: item?.post_url || item?.postUrl || null,
+              post_id: item?.post_id || item?.postId || null,
+              page: item?.page || null,
+              title: item?.title || null,
+              description: item?.description || null,
+            };
+          } catch { /* n8n returned non-JSON, ignore */ }
+        }
+      } catch { /* CORS not enabled on n8n yet — still shows form data */ }
+
+      setSubmittedPost({
+        page: n8nResult?.page || selectedPage,
+        headline: n8nResult?.title || headline.trim(),
+        caption: n8nResult?.description || caption.trim(),
+        orientation,
+        imagePreview: n8nResult?.image_url || postImageFile.preview || (postImageUrl.trim() || null),
+        templateHtml: selectedTemplateObj?.html || null,
+        templateName: selectedTemplateObj?.name || null,
+        postUrl: n8nResult?.post_url || null,
+        postId: n8nResult?.post_id || null,
+        sentAt: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+      });
       setQueue((prev) => [{
         id: Date.now(), page: selectedPage, headline: headline.trim(), caption: caption.trim(),
         template: "News", status: "Pending", scheduledTime: "Now",
@@ -2378,8 +2414,61 @@ function ComposePostPage({ initialTemplate }: { initialTemplate?: TemplateName }
 
         {/* ── Right column — Live Preview ── */}
         <Card className="xl:col-span-2 p-5 rounded-2xl border border-white/10 bg-white/95 dark:bg-[#081328] self-start sticky top-4">
-          <h3 className="text-lg font-bold mb-4">Live Preview</h3>
-          {selectedTemplateObj?.html ? (
+          <div className="flex items-center justify-between mb-4">
+            <h3 className="text-lg font-bold">Live Preview</h3>
+            {submittedPost && (
+              <button type="button" onClick={() => setSubmittedPost(null)}
+                className="text-xs text-muted-foreground hover:text-foreground underline underline-offset-2">
+                Clear
+              </button>
+            )}
+          </div>
+
+          {/* After submission — show sent post */}
+          {submittedPost ? (
+            <div className="space-y-3">
+              <div className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-emerald-500/15 border border-emerald-500/30 w-fit">
+                <svg className="h-3 w-3 text-emerald-400" fill="currentColor" viewBox="0 0 20 20"><path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414L8.414 15l-4.121-4.121a1 1 0 011.414-1.414L8.414 12.172l6.879-6.879a1 1 0 011.414 0z" clipRule="evenodd" /></svg>
+                <span className="text-xs font-medium text-emerald-400">Sent to n8n · {submittedPost.sentAt}</span>
+              </div>
+
+              {submittedPost.templateHtml ? (
+                <TemplatePreview html={submittedPost.templateHtml} title={submittedPost.templateName || "Preview"} />
+              ) : (
+                <div className="rounded-2xl border border-white/10 bg-background/50 p-4">
+                  <div className="flex items-center justify-between mb-3">
+                    <div className="flex items-center gap-3">
+                      <div className="h-10 w-10 rounded-full bg-[#0d9488]/20 text-[#0d9488] grid place-items-center font-bold text-sm">
+                        {submittedPost.page.charAt(0)}
+                      </div>
+                      <div>
+                        <p className="font-semibold leading-5">{submittedPost.page}</p>
+                        <p className="text-xs text-muted-foreground">{submittedPost.sentAt}</p>
+                      </div>
+                    </div>
+                    {submittedPost.templateName && (
+                      <Badge className="border border-[#0d9488]/40 bg-[#0d9488]/15 text-[#2dd4bf]">{submittedPost.templateName}</Badge>
+                    )}
+                  </div>
+                  <p className="font-semibold text-base mb-2">{submittedPost.headline}</p>
+                  {submittedPost.caption && <p className="text-sm text-muted-foreground leading-6">{submittedPost.caption}</p>}
+                  {submittedPost.imagePreview && (
+                    <img src={submittedPost.imagePreview} alt="post" className="mt-3 w-full rounded-xl object-contain bg-black/10" />
+                  )}
+                  {submittedPost.orientation && (
+                    <p className="text-xs text-[#0d9488] mt-2">Orientation: {submittedPost.orientation.charAt(0).toUpperCase() + submittedPost.orientation.slice(1)}</p>
+                  )}
+                  {submittedPost.postUrl && (
+                    <a href={submittedPost.postUrl} target="_blank" rel="noopener noreferrer"
+                      className="inline-flex items-center gap-1.5 mt-3 text-xs font-medium text-[#0d9488] hover:underline">
+                      <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" /></svg>
+                      View Post on Facebook
+                    </a>
+                  )}
+                </div>
+              )}
+            </div>
+          ) : selectedTemplateObj?.html ? (
             <TemplatePreview html={selectedTemplateObj.html} title={selectedTemplateObj.name} />
           ) : (
             <div className="rounded-2xl border border-white/10 bg-background/50 p-4">
