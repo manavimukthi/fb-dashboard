@@ -163,7 +163,6 @@ type ConnectionsConfig = {
   formsWebhookUrl: string;
   mediaWebhookUrl: string;
   n8nApiBaseUrl: string;
-  n8nApiKey: string;
   sheetDeploymentId: string;
   sheetWebAppUrl: string;
   composeScriptUrl: string;
@@ -432,7 +431,6 @@ const defaultConnections: ConnectionsConfig = {
   formsWebhookUrl: "",
   mediaWebhookUrl: "",
   n8nApiBaseUrl: "",
-  n8nApiKey: "",
   sheetDeploymentId: "",
   sheetWebAppUrl: "",
   composeScriptUrl: "",
@@ -473,10 +471,7 @@ const useConnectionsConfig = (): Partial<ConnectionsConfig> => {
 };
 
 const resolveN8nApiConfig = (savedConfig: Partial<ConnectionsConfig> = getSavedConnectionsConfig()): { apiBaseUrls: string[]; apiKey: string } => {
-  // .env vars are baked into the JS bundle and work in every browser automatically.
-  // savedConfig (localStorage) is only used as a per-device fallback when env var is absent.
-  const envApiKey = String(import.meta.env.VITE_N8N_API_KEY ?? import.meta.env.VITE_N8N_PUBLIC_API_KEY ?? "").trim();
-  const apiKey = envApiKey || String(savedConfig.n8nApiKey ?? "").trim();
+  const apiKey = String(import.meta.env.VITE_N8N_API_KEY ?? "").trim();
 
   const envBase = String(import.meta.env.VITE_N8N_BASE_URL ?? "").trim();
   const savedBase = String(savedConfig.n8nApiBaseUrl ?? "").trim();
@@ -4226,7 +4221,6 @@ function ConnFieldRow({
 
 function ConnectionsPage() {
   const envVars: Partial<Record<keyof ConnectionsConfig, string>> = {
-    n8nApiKey: String(import.meta.env.VITE_N8N_API_KEY ?? ""),
     formsWebhookUrl: String(import.meta.env.VITE_N8N_FORMS_WEBHOOK_URL ?? ""),
     syncWebhook: String(import.meta.env.VITE_N8N_PAGE_WEBHOOK_URL ?? ""),
     baseWebhookUrl: String(import.meta.env.VITE_VERIFY_WEBHOOK_URL ?? ""),
@@ -4317,16 +4311,6 @@ function ConnectionsPage() {
           <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-amber-400 inline-block" /> CUSTOM = manually set</span>
         </div>
       </div>
-
-      {/* n8n API */}
-      <Card className="p-5 rounded-2xl border border-white/10 bg-white/95 dark:bg-[#081328] space-y-3">
-        <div className="flex items-center gap-2 pb-1 border-b border-white/10">
-          <Zap className="h-4 w-4 text-[#0d9488]" />
-          <h3 className="text-base font-bold">n8n API</h3>
-        </div>
-        {row("n8nApiKey", "API Key", { secret: true, placeholder: "Paste n8n Public API key" })}
-        {row("n8nApiBaseUrl", "API Base URL", { testable: true, placeholder: "https://n8n.example.com/api/v1" })}
-      </Card>
 
       {/* n8n Webhooks */}
       <Card className="p-5 rounded-2xl border border-white/10 bg-white/95 dark:bg-[#081328] space-y-3">
@@ -4769,9 +4753,9 @@ const EmailMarketingDashboard: React.FC = () => {
   };
 
   return (
-    <div className={cn("min-h-screen", darkMode && "dark")}>
+    <div className={cn("min-h-[100dvh]", darkMode && "dark")}>
       <div className="grid-overlay pointer-events-none" />
-      <div className="flex h-screen bg-slate-100 dark:bg-[#02091d] text-foreground overflow-hidden">
+      <div className="flex h-[100dvh] bg-slate-100 dark:bg-[#02091d] text-foreground overflow-hidden">
 
         {/* Mobile backdrop */}
         {sidebarOpen && (
