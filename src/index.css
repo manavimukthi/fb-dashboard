@@ -44,6 +44,12 @@
   @apply border-border;
 }
 
+/* Smooth scroll for keyboard-induced scroll-to-focused-input on mobile */
+main {
+  scroll-behavior: smooth;
+  -webkit-overflow-scrolling: touch;
+}
+
 body {
   margin: 0;
   min-width: 320px;

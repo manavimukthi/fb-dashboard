@@ -2314,16 +2314,16 @@ function ComposePostPage({ initialTemplate }: { initialTemplate?: TemplateName }
 
       <div className="grid grid-cols-1 xl:grid-cols-5 gap-6">
         {/* ── Left column — tabbed card ── */}
-        <Card className="xl:col-span-3 rounded-2xl border border-white/10 bg-white/95 dark:bg-[#081328] overflow-hidden">
+        <Card className="xl:col-span-3 rounded-2xl border border-white/10 bg-white/95 dark:bg-[#081328]">
 
           {/* Tab switcher */}
-          <div className="flex border-b border-white/10">
+          <div className="flex border-b border-white/10 rounded-t-2xl overflow-hidden">
             <div className="flex-1 py-3.5 text-sm font-semibold text-[#0d9488] border-b-2 border-[#0d9488] bg-[#0d9488]/5 text-center">
               Compose Post
             </div>
           </div>
 
-          <div className="p-5">
+          <div className="p-4 sm:p-5">
             {/* ── Post form ── */}
             <div className="space-y-5">
                 <div>
@@ -4864,7 +4864,7 @@ const EmailMarketingDashboard: React.FC = () => {
             </div>
           )}
 
-          <main className="flex-1 overflow-y-auto p-3 sm:p-4 md:p-6">
+          <main className="flex-1 overflow-y-auto p-3 sm:p-4 md:p-6 pb-[env(keyboard-inset-height,1rem)] sm:pb-6">
             <div className="max-w-7xl mx-auto animate-floatIn">{renderPage()}</div>
           </main>
         </div>
