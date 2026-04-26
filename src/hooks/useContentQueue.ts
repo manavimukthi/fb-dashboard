@@ -161,8 +161,25 @@ export function useContentQueue(): UseContentQueueReturn {
 
   useEffect(() => {
     fetchData();
-    const interval = setInterval(fetchData, 30000);
-    return () => clearInterval(interval);
+
+    let interval: ReturnType<typeof setInterval> | null = setInterval(fetchData, 30000);
+
+    const handleVisibility = () => {
+      if (document.hidden) {
+        if (interval !== null) { clearInterval(interval); interval = null; }
+      } else {
+        fetchData();
+        if (interval === null) {
+          interval = setInterval(fetchData, 30000);
+        }
+      }
+    };
+
+    document.addEventListener("visibilitychange", handleVisibility);
+    return () => {
+      if (interval !== null) clearInterval(interval);
+      document.removeEventListener("visibilitychange", handleVisibility);
+    };
   }, [fetchData]);
 
   return { posts, loading, error, lastSynced, refetch: fetchData };

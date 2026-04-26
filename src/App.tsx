@@ -1006,7 +1006,7 @@ function SyncProvider({ children }: { children: React.ReactNode }) {
     }
   }, []);
 
-  const syncNow = React.useCallback(async () => {
+  const syncNow = React.useCallback(async (options?: { skipFacebook?: boolean }) => {
     setSyncStatus("syncing");
 
     let webhookSuccess = false;
@@ -1040,10 +1040,13 @@ function SyncProvider({ children }: { children: React.ReactNode }) {
 
     const freshPages = await syncPagesFromGoogleSheet();
     sheetSuccess = freshPages !== null;
-    const pagesToSync = freshPages ?? pagesRef.current;
-    facebookMetricsSuccess = await syncPageMetricsFromFacebook(pagesToSync);
-    recentPostsSuccess = await syncRecentPostsFromFacebook(pagesToSync);
-    await syncRecentCommentsFromFacebook(pagesToSync);
+
+    if (!options?.skipFacebook) {
+      const pagesToSync = freshPages ?? pagesRef.current;
+      facebookMetricsSuccess = await syncPageMetricsFromFacebook(pagesToSync);
+      recentPostsSuccess = await syncRecentPostsFromFacebook(pagesToSync);
+      await syncRecentCommentsFromFacebook(pagesToSync);
+    }
 
     if (webhookSuccess || sheetSuccess || facebookMetricsSuccess || recentPostsSuccess) {
       setLastUpdated(new Date().toISOString());
@@ -1057,14 +1060,57 @@ function SyncProvider({ children }: { children: React.ReactNode }) {
     setFailedAttempts((prev) => prev + 1);
   }, [syncPageMetricsFromFacebook, syncPagesFromGoogleSheet, syncRecentCommentsFromFacebook, syncRecentPostsFromFacebook, webhook]);
 
+  // Full sync ref — used by the manual sync button and the initial load.
   const syncNowRef = React.useRef(syncNow);
   React.useEffect(() => { syncNowRef.current = syncNow; });
 
-  // Stable interval — empty deps prevents re-triggering on every pages/syncNow change
+  // Lightweight ref — n8n + Google Sheet only, no Facebook calls.
+  // Used by Loop 1 so the background interval stays lightweight.
+  const syncLightweightRef = React.useRef<() => Promise<void>>(async () => {});
+  React.useEffect(() => { syncLightweightRef.current = () => syncNow({ skipFacebook: true }); });
+
+  // Facebook-only ref — used by the visibility-aware Loop 2.
+  const syncFacebookRef = React.useRef<() => Promise<void>>(async () => {});
   React.useEffect(() => {
-    void syncNowRef.current();
-    const timer = setInterval(() => void syncNowRef.current(), 30_000);
+    syncFacebookRef.current = async () => {
+      const pages = pagesRef.current;
+      await syncPageMetricsFromFacebook(pages);
+      await syncRecentPostsFromFacebook(pages);
+      await syncRecentCommentsFromFacebook(pages);
+    };
+  });
+
+  // Loop 1 — n8n webhook + Google Sheet: simple always-on 30 s interval.
+  // Lightweight — keeps polling even when the tab is in the background.
+  React.useEffect(() => {
+    void syncNowRef.current(); // initial full sync (includes FB) on mount
+    const timer = setInterval(() => void syncLightweightRef.current(), 30_000);
     return () => clearInterval(timer);
+  }, []);
+
+  // Loop 2 — Facebook Graph API: 5 min interval, visibility-aware.
+  React.useEffect(() => {
+    let fbTimer: ReturnType<typeof setInterval> | null = setInterval(
+      () => void syncFacebookRef.current(),
+      300_000
+    );
+
+    const handleVisibility = () => {
+      if (document.hidden) {
+        if (fbTimer !== null) { clearInterval(fbTimer); fbTimer = null; }
+      } else {
+        void syncFacebookRef.current();
+        if (fbTimer === null) {
+          fbTimer = setInterval(() => void syncFacebookRef.current(), 300_000);
+        }
+      }
+    };
+
+    document.addEventListener("visibilitychange", handleVisibility);
+    return () => {
+      if (fbTimer !== null) clearInterval(fbTimer);
+      document.removeEventListener("visibilitychange", handleVisibility);
+    };
   }, []);
 
   const value: SyncContextValue = {
@@ -4639,7 +4685,7 @@ function ModulePlaceholder({ title }: { title: string }) {
 }
 
 const EmailMarketingDashboard: React.FC = () => {
-  const [sidebarOpen, setSidebarOpen] = React.useState(true);
+  const [sidebarOpen, setSidebarOpen] = React.useState(() => typeof window !== "undefined" ? window.innerWidth >= 768 : true);
   const [darkMode, setDarkMode] = React.useState(true);
   const [activeView, setActiveView] = React.useState<ViewKey>("Dashboard");
   const [composeTemplateSeed, setComposeTemplateSeed] = React.useState<TemplateName | undefined>(undefined);
@@ -4728,15 +4774,29 @@ const EmailMarketingDashboard: React.FC = () => {
   return (
     <div className={cn("min-h-screen", darkMode && "dark")}>
       <div className="grid-overlay pointer-events-none" />
-      <div className="flex h-screen bg-slate-100 dark:bg-[#02091d] text-foreground">
+      <div className="flex h-screen bg-slate-100 dark:bg-[#02091d] text-foreground overflow-hidden">
+
+        {/* Mobile backdrop */}
+        {sidebarOpen && (
+          <div
+            className="fixed inset-0 bg-black/50 z-30 md:hidden"
+            onClick={() => setSidebarOpen(false)}
+          />
+        )}
+
         <aside
           className={cn(
-            "bg-background/95 backdrop-blur-md border-r transition-all duration-300 overflow-y-auto",
-            sidebarOpen ? "w-64" : "w-0 md:w-20"
+            "bg-background/95 backdrop-blur-md border-r transition-all duration-300 overflow-y-auto shrink-0",
+            "fixed md:relative inset-y-0 left-0 z-40 md:z-auto h-full",
+            sidebarOpen
+              ? "w-64 translate-x-0"
+              : "w-64 -translate-x-full md:translate-x-0 md:w-20"
           )}
         >
           <div className="p-6">
-            <h1 className={cn("text-2xl font-black text-[#0d9488] tracking-tight", !sidebarOpen && "md:text-lg")}>{sidebarOpen ? "Outreachly" : "O"}</h1>
+            <h1 className={cn("text-2xl font-black text-[#0d9488] tracking-tight", !sidebarOpen && "md:text-lg md:text-center")}>
+              {sidebarOpen ? "Outreachly" : "O"}
+            </h1>
           </div>
 
           <nav className="px-3 space-y-6 pb-6">
@@ -4749,10 +4809,18 @@ const EmailMarketingDashboard: React.FC = () => {
                     <button
                       key={item.label}
                       type="button"
-                      onClick={() => setActiveView(item.label)}
-                      className={cn("w-full flex items-center gap-3 px-3 py-2 rounded-lg mb-1 transition-colors", isActive ? "bg-[#0d9488] text-white" : "hover:bg-muted text-muted-foreground")}
+                      onClick={() => {
+                        setActiveView(item.label);
+                        if (window.innerWidth < 768) setSidebarOpen(false);
+                      }}
+                      className={cn(
+                        "w-full flex items-center gap-3 px-3 py-2 rounded-lg mb-1 transition-colors",
+                        !sidebarOpen && "md:justify-center md:px-2",
+                        isActive ? "bg-[#0d9488] text-white" : "hover:bg-muted text-muted-foreground"
+                      )}
+                      title={!sidebarOpen ? item.label : undefined}
                     >
-                      <item.icon className="h-5 w-5" />
+                      <item.icon className="h-5 w-5 shrink-0" />
                       {sidebarOpen && <span className="text-sm font-medium">{item.label}</span>}
                     </button>
                   );
@@ -4762,37 +4830,41 @@ const EmailMarketingDashboard: React.FC = () => {
           </nav>
         </aside>
 
-        <div className="flex-1 flex flex-col overflow-hidden">
-          <header className="bg-background/95 backdrop-blur-md border-b px-4 md:px-6 py-4">
-            <div className="flex items-center justify-between gap-4">
-              <div className="flex items-center gap-4 flex-1">
-                <Button variant="ghost" size="icon" onClick={() => setSidebarOpen(!sidebarOpen)}>
+        <div className="flex-1 flex flex-col overflow-hidden min-w-0">
+          <header className="bg-background/95 backdrop-blur-md border-b px-3 sm:px-4 md:px-6 py-3 sm:py-4 shrink-0">
+            <div className="flex items-center justify-between gap-2 sm:gap-4">
+              <div className="flex items-center gap-2 sm:gap-4 flex-1 min-w-0">
+                <Button variant="ghost" size="icon" className="shrink-0" onClick={() => setSidebarOpen(!sidebarOpen)}>
                   <Menu className="h-5 w-5" />
                 </Button>
-                <div className="relative flex-1 max-w-md">
+                <div className="relative hidden sm:flex flex-1 max-w-md">
                   <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
                   <Input placeholder="Search posts, pages, workflows..." className="pl-10" />
                 </div>
+                <span className="sm:hidden font-bold text-[#0d9488] text-base truncate">{activeView}</span>
               </div>
-              <div className="flex items-center gap-3">
+              <div className="flex items-center gap-1 sm:gap-2">
+                <Button variant="ghost" size="icon" className="sm:hidden shrink-0">
+                  <Search className="h-5 w-5" />
+                </Button>
                 <div className="hidden md:flex items-center gap-2 text-xs text-muted-foreground">
                   <RefreshCcw className={cn("h-3.5 w-3.5", syncStatus === "syncing" && "animate-spin", syncStatus === "error" && "text-rose-400")} />
                   <span>{syncStatus === "error" ? "Sync failed" : `Synced ${timeSince(lastSynced)}`}</span>
                   {syncStatus === "error" && <span className="h-2 w-2 rounded-full bg-rose-500" />}
                 </div>
-                <Button variant="ghost" size="icon" onClick={() => void syncNow()}>
+                <Button variant="ghost" size="icon" className="hidden sm:inline-flex shrink-0" onClick={() => void syncNow()}>
                   <RefreshCcw className={cn("h-5 w-5", syncStatus === "syncing" && "animate-spin")} />
                 </Button>
-                <Button variant="ghost" size="icon" onClick={() => setDarkMode((prev) => !prev)} aria-label="Toggle color theme">
+                <Button variant="ghost" size="icon" className="shrink-0" onClick={() => setDarkMode((prev) => !prev)} aria-label="Toggle color theme">
                   {darkMode ? <Sun className="h-5 w-5" /> : <Moon className="h-5 w-5" />}
                 </Button>
-                <Button variant="ghost" size="icon">
+                <Button variant="ghost" size="icon" className="hidden sm:inline-flex shrink-0">
                   <Bell className="h-5 w-5" />
                 </Button>
-                <Button variant="ghost" size="icon" onClick={() => void toggleFullscreen()} aria-label="Toggle fullscreen">
+                <Button variant="ghost" size="icon" className="hidden md:inline-flex shrink-0" onClick={() => void toggleFullscreen()} aria-label="Toggle fullscreen">
                   {isFullscreen ? <Minimize2 className="h-5 w-5" /> : <Maximize2 className="h-5 w-5" />}
                 </Button>
-                <Avatar>
+                <Avatar className="h-8 w-8 sm:h-10 sm:w-10 shrink-0">
                   <AvatarImage src="" />
                   <AvatarFallback>JD</AvatarFallback>
                 </Avatar>
@@ -4801,12 +4873,12 @@ const EmailMarketingDashboard: React.FC = () => {
           </header>
 
           {failedAttempts >= 3 && (
-            <div className="px-4 md:px-6 py-2 bg-amber-500/15 border-b border-amber-500/30 text-amber-200 text-sm">
+            <div className="px-4 md:px-6 py-2 bg-amber-500/15 border-b border-amber-500/30 text-amber-200 text-sm shrink-0">
               Connection to n8n lost - showing cached data.
             </div>
           )}
 
-          <main className="flex-1 overflow-y-auto p-4 md:p-6">
+          <main className="flex-1 overflow-y-auto p-3 sm:p-4 md:p-6">
             <div className="max-w-7xl mx-auto animate-floatIn">{renderPage()}</div>
           </main>
         </div>
