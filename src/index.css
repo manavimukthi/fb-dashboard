@@ -47,7 +47,7 @@
 body {
   margin: 0;
   min-width: 320px;
-  min-height: 100vh;
+  min-height: 100dvh;
   font-family: "Manrope", sans-serif;
   @apply bg-background text-foreground;
   background-image:
@@ -57,7 +57,13 @@ body {
   background-attachment: fixed;
 }
 
-.dark body {
+/* Dark mode on <html> — covers body, over-scroll bounce area, and safe-area insets */
+html.dark {
+  background-color: #02091d;
+}
+
+html.dark body {
+  background-color: #02091d;
   background-image:
     radial-gradient(circle at 0% 10%, rgba(22, 163, 74, 0.2), transparent 32%),
     radial-gradient(circle at 95% 12%, rgba(14, 165, 233, 0.14), transparent 30%),

@@ -4669,6 +4669,15 @@ const EmailMarketingDashboard: React.FC = () => {
   const [isFullscreen, setIsFullscreen] = React.useState(false);
   const { syncStatus, lastSyncedAt, failedAttempts, syncNow } = useSync();
 
+  // Sync dark mode to <html> so body background and over-scroll area match the theme.
+  React.useEffect(() => {
+    if (darkMode) {
+      document.documentElement.classList.add("dark");
+    } else {
+      document.documentElement.classList.remove("dark");
+    }
+  }, [darkMode]);
+
   React.useEffect(() => {
     const updateFullscreenState = () => {
       setIsFullscreen(Boolean(document.fullscreenElement));
@@ -4749,7 +4758,7 @@ const EmailMarketingDashboard: React.FC = () => {
   };
 
   return (
-    <div className={cn("min-h-[100dvh]", darkMode && "dark")}>
+    <div className="min-h-[100dvh]">
       <div className="grid-overlay pointer-events-none" />
       <div className="flex h-[100dvh] bg-slate-100 dark:bg-[#02091d] text-foreground overflow-hidden">
 
