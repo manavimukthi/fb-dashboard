@@ -3438,40 +3438,35 @@ function AutomationsPage() {
 
       <div className="space-y-3">
         {!isLoading && workflows.filter((w) => w.active).map((workflow) => (
-          <Card key={workflow.id} className="p-4 rounded-xl border border-white/10 bg-white/95 dark:bg-[#081328]">
-            <div className="flex flex-col sm:flex-row sm:items-center gap-3">
-              {/* Icon + name + badge */}
-              <div className="flex items-center gap-3 flex-1 min-w-0">
-                <div className={cn("h-10 w-10 shrink-0 rounded-lg grid place-items-center", workflow.active ? "bg-[#0d9488]/20 text-[#2dd4bf]" : "bg-slate-500/15 text-slate-300")}>
-                  <Bot className="h-5 w-5" />
-                </div>
-                <div className="flex-1 min-w-0">
-                  <p className="font-semibold truncate">{workflow.name}</p>
-                  <Badge className={cn("border mt-1", workflow.active ? "bg-emerald-500/15 text-emerald-300 border-emerald-500/35" : "bg-amber-500/15 text-amber-300 border-amber-500/35")}>
-                    {workflow.active ? "Running" : "Stopped"}
-                  </Badge>
-                </div>
+          <Card key={workflow.id} className="p-3 sm:p-4 rounded-xl border border-white/10 bg-white/95 dark:bg-[#081328]">
+            <div className="flex items-center gap-3">
+              <div className={cn("h-9 w-9 shrink-0 rounded-lg grid place-items-center", workflow.active ? "bg-[#0d9488]/20 text-[#2dd4bf]" : "bg-slate-500/15 text-slate-300")}>
+                <Bot className="h-4 w-4" />
               </div>
-
-              {/* Action buttons */}
-              <div className="flex items-center gap-2 shrink-0 self-end sm:self-auto">
+              <div className="flex-1 min-w-0">
+                <p className="font-semibold text-sm leading-tight truncate">{workflow.name}</p>
+                <Badge className={cn("border mt-1 text-[10px] py-0", workflow.active ? "bg-emerald-500/15 text-emerald-300 border-emerald-500/35" : "bg-amber-500/15 text-amber-300 border-amber-500/35")}>
+                  {workflow.active ? "Running" : "Stopped"}
+                </Badge>
+              </div>
+              <div className="flex items-center gap-1.5 shrink-0">
                 <Button
                   size="sm"
                   variant="outline"
-                  className="border-emerald-500/60 text-emerald-300 hover:bg-emerald-500/10"
+                  className="h-8 px-3 text-xs border-emerald-500/60 text-emerald-300 hover:bg-emerald-500/10"
                   onClick={() => void setWorkflowState(workflow, "start")}
                   disabled={workflow.active || (actionLoading?.id === workflow.id && actionLoading.action === "start")}
                 >
-                  {actionLoading?.id === workflow.id && actionLoading.action === "start" ? "Starting…" : "Start"}
+                  {actionLoading?.id === workflow.id && actionLoading.action === "start" ? "…" : "Start"}
                 </Button>
                 <Button
                   size="sm"
                   variant="outline"
-                  className="border-rose-500/60 text-rose-300 hover:bg-rose-500/10"
+                  className="h-8 px-3 text-xs border-rose-500/60 text-rose-300 hover:bg-rose-500/10"
                   onClick={() => void setWorkflowState(workflow, "stop")}
                   disabled={!workflow.active || (actionLoading?.id === workflow.id && actionLoading.action === "stop")}
                 >
-                  {actionLoading?.id === workflow.id && actionLoading.action === "stop" ? "Stopping…" : "Stop"}
+                  {actionLoading?.id === workflow.id && actionLoading.action === "stop" ? "…" : "Stop"}
                 </Button>
               </div>
             </div>
@@ -3657,34 +3652,30 @@ function WorkflowsPage() {
 
       <div className="space-y-3">
         {!isLoading && visible.map((workflow) => (
-          <Card key={workflow.id} className="p-4 rounded-xl border border-white/10 bg-white/95 dark:bg-[#081328] hover:border-white/20 transition-colors">
-            <div className="flex flex-col sm:flex-row sm:items-center gap-3">
-              {/* Icon + name + tags + badge */}
-              <div className="flex items-center gap-3 flex-1 min-w-0">
-                <div className={cn("h-10 w-10 rounded-lg grid place-items-center shrink-0", workflow.active ? "bg-[#0d9488]/20 text-[#2dd4bf]" : "bg-slate-500/15 text-slate-400")}>
-                  <Bot className="h-5 w-5" />
-                </div>
-                <div className="flex-1 min-w-0">
-                  <p className="font-semibold truncate">{workflow.name}</p>
-                  <div className="flex flex-wrap items-center gap-1 mt-1">
-                    <Badge className={cn("border", workflow.active ? "bg-emerald-500/15 text-emerald-300 border-emerald-500/35" : "bg-amber-500/15 text-amber-300 border-amber-500/35")}>
-                      {workflow.active ? "Published" : "Unpublished"}
-                    </Badge>
-                    {workflow.tags && workflow.tags.map((tag) => (
-                      <span key={tag.id} className="text-[10px] px-2 py-0.5 rounded-full bg-white/10 text-muted-foreground border border-white/10">{tag.name}</span>
-                    ))}
-                  </div>
+          <Card key={workflow.id} className="p-3 sm:p-4 rounded-xl border border-white/10 bg-white/95 dark:bg-[#081328] hover:border-white/20 transition-colors">
+            <div className="flex items-center gap-3">
+              <div className={cn("h-9 w-9 rounded-lg grid place-items-center shrink-0", workflow.active ? "bg-[#0d9488]/20 text-[#2dd4bf]" : "bg-slate-500/15 text-slate-400")}>
+                <Bot className="h-4 w-4" />
+              </div>
+              <div className="flex-1 min-w-0">
+                <p className="font-semibold text-sm leading-tight truncate">{workflow.name}</p>
+                <div className="flex flex-wrap items-center gap-1 mt-1">
+                  <Badge className={cn("border text-[10px] py-0", workflow.active ? "bg-emerald-500/15 text-emerald-300 border-emerald-500/35" : "bg-amber-500/15 text-amber-300 border-amber-500/35")}>
+                    {workflow.active ? "Published" : "Unpublished"}
+                  </Badge>
+                  {workflow.tags && workflow.tags.map((tag) => (
+                    <span key={tag.id} className="text-[10px] px-2 py-0.5 rounded-full bg-white/10 text-muted-foreground border border-white/10">{tag.name}</span>
+                  ))}
                 </div>
               </div>
-              {/* Action button */}
-              <div className="shrink-0 self-end sm:self-auto">
+              <div className="shrink-0">
                 <Button
                   variant="outline"
                   size="sm"
                   onClick={() => void toggleWorkflow(workflow)}
                   disabled={actionLoading === workflow.id}
-                  className={cn(workflow.active ? "border-rose-500/60 text-rose-300 hover:bg-rose-500/10" : "border-emerald-500/60 text-emerald-300 hover:bg-emerald-500/10")}>
-                  {actionLoading === workflow.id ? "Updating…" : workflow.active ? "Unpublish" : "Publish"}
+                  className={cn("h-8 px-3 text-xs", workflow.active ? "border-rose-500/60 text-rose-300 hover:bg-rose-500/10" : "border-emerald-500/60 text-emerald-300 hover:bg-emerald-500/10")}>
+                  {actionLoading === workflow.id ? "…" : workflow.active ? "Unpublish" : "Publish"}
                 </Button>
               </div>
             </div>
