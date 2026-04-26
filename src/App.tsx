@@ -438,6 +438,7 @@ const defaultConnections: ConnectionsConfig = {
 };
 
 const DEFAULT_N8N_API_BASE_URL = "https://n8n.kasunmadhuwantha.cv/api/v1";
+const DEFAULT_N8N_API_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiI5NWQ1NmVmYi0zNzlhLTQ5Y2MtYTRmMS02OTliMTQyNzQ2MjYiLCJpc3MiOiJuOG4iLCJhdWQiOiJwdWJsaWMtYXBpIiwianRpIjoiNGE2NWY0NTktMzhlYS00OGVjLTkzMGEtMzhjN2YzODc0N2EzIiwiaWF0IjoxNzc3MTgzNzU4fQ.chgmF_IpYQ2YKrDIr5CrMvzv_q7NenQybVRuR0p8HWU";
 const DEFAULT_GSHEET_WEB_APP_URL = "https://script.google.com/macros/s/AKfycbyAA0fzHZMvz6bqVgypsbz6oKk1oxjPLjkNDRxh3DoakpsIjlGW636o_lpwy9DWuTA/exec";
 const CONNECTIONS_CONFIG_UPDATED_EVENT = "connections-config-updated";
 
@@ -471,7 +472,7 @@ const useConnectionsConfig = (): Partial<ConnectionsConfig> => {
 };
 
 const resolveN8nApiConfig = (savedConfig: Partial<ConnectionsConfig> = getSavedConnectionsConfig()): { apiBaseUrls: string[]; apiKey: string } => {
-  const apiKey = String(import.meta.env.VITE_N8N_API_KEY ?? "").trim();
+  const apiKey = String(import.meta.env.VITE_N8N_API_KEY ?? DEFAULT_N8N_API_KEY).trim();
 
   const envBase = String(import.meta.env.VITE_N8N_BASE_URL ?? "").trim();
   const savedBase = String(savedConfig.n8nApiBaseUrl ?? "").trim();
@@ -3438,35 +3439,39 @@ function AutomationsPage() {
       <div className="space-y-3">
         {!isLoading && workflows.filter((w) => w.active).map((workflow) => (
           <Card key={workflow.id} className="p-4 rounded-xl border border-white/10 bg-white/95 dark:bg-[#081328]">
-            <div className="flex items-start justify-between gap-4">
-              <div className="flex items-start gap-3 min-w-0">
-                <div className={cn("h-10 w-10 rounded-lg grid place-items-center", workflow.active ? "bg-[#0d9488]/20 text-[#2dd4bf]" : "bg-slate-500/15 text-slate-300")}>
+            <div className="flex flex-col sm:flex-row sm:items-center gap-3">
+              {/* Icon + name + badge */}
+              <div className="flex items-center gap-3 flex-1 min-w-0">
+                <div className={cn("h-10 w-10 shrink-0 rounded-lg grid place-items-center", workflow.active ? "bg-[#0d9488]/20 text-[#2dd4bf]" : "bg-slate-500/15 text-slate-300")}>
                   <Bot className="h-5 w-5" />
                 </div>
-                <div className="min-w-0">
+                <div className="flex-1 min-w-0">
                   <p className="font-semibold truncate">{workflow.name}</p>
+                  <Badge className={cn("border mt-1", workflow.active ? "bg-emerald-500/15 text-emerald-300 border-emerald-500/35" : "bg-amber-500/15 text-amber-300 border-amber-500/35")}>
+                    {workflow.active ? "Running" : "Stopped"}
+                  </Badge>
                 </div>
               </div>
 
-              <div className="flex items-center gap-2 shrink-0">
-                <Badge className={cn("border", workflow.active ? "bg-emerald-500/15 text-emerald-300 border-emerald-500/35" : "bg-amber-500/15 text-amber-300 border-amber-500/35")}>
-                  {workflow.active ? "Running" : "Stopped"}
-                </Badge>
+              {/* Action buttons */}
+              <div className="flex items-center gap-2 shrink-0 self-end sm:self-auto">
                 <Button
+                  size="sm"
                   variant="outline"
                   className="border-emerald-500/60 text-emerald-300 hover:bg-emerald-500/10"
                   onClick={() => void setWorkflowState(workflow, "start")}
                   disabled={workflow.active || (actionLoading?.id === workflow.id && actionLoading.action === "start")}
                 >
-                  {actionLoading?.id === workflow.id && actionLoading.action === "start" ? "Starting..." : "Start"}
+                  {actionLoading?.id === workflow.id && actionLoading.action === "start" ? "Starting…" : "Start"}
                 </Button>
                 <Button
+                  size="sm"
                   variant="outline"
                   className="border-rose-500/60 text-rose-300 hover:bg-rose-500/10"
                   onClick={() => void setWorkflowState(workflow, "stop")}
                   disabled={!workflow.active || (actionLoading?.id === workflow.id && actionLoading.action === "stop")}
                 >
-                  {actionLoading?.id === workflow.id && actionLoading.action === "stop" ? "Stopping..." : "Stop"}
+                  {actionLoading?.id === workflow.id && actionLoading.action === "stop" ? "Stopping…" : "Stop"}
                 </Button>
               </div>
             </div>
@@ -3653,33 +3658,33 @@ function WorkflowsPage() {
       <div className="space-y-3">
         {!isLoading && visible.map((workflow) => (
           <Card key={workflow.id} className="p-4 rounded-xl border border-white/10 bg-white/95 dark:bg-[#081328] hover:border-white/20 transition-colors">
-            <div className="flex items-center justify-between gap-4">
-              <div className="flex items-center gap-3 min-w-0">
+            <div className="flex flex-col sm:flex-row sm:items-center gap-3">
+              {/* Icon + name + tags + badge */}
+              <div className="flex items-center gap-3 flex-1 min-w-0">
                 <div className={cn("h-10 w-10 rounded-lg grid place-items-center shrink-0", workflow.active ? "bg-[#0d9488]/20 text-[#2dd4bf]" : "bg-slate-500/15 text-slate-400")}>
                   <Bot className="h-5 w-5" />
                 </div>
-                <div className="min-w-0">
+                <div className="flex-1 min-w-0">
                   <p className="font-semibold truncate">{workflow.name}</p>
-                  {workflow.tags && workflow.tags.length > 0 && (
-                    <div className="flex gap-1 mt-1 flex-wrap">
-                      {workflow.tags.map((tag) => (
-                        <span key={tag.id} className="text-[10px] px-2 py-0.5 rounded-full bg-white/10 text-muted-foreground border border-white/10">{tag.name}</span>
-                      ))}
-                    </div>
-                  )}
+                  <div className="flex flex-wrap items-center gap-1 mt-1">
+                    <Badge className={cn("border", workflow.active ? "bg-emerald-500/15 text-emerald-300 border-emerald-500/35" : "bg-amber-500/15 text-amber-300 border-amber-500/35")}>
+                      {workflow.active ? "Published" : "Unpublished"}
+                    </Badge>
+                    {workflow.tags && workflow.tags.map((tag) => (
+                      <span key={tag.id} className="text-[10px] px-2 py-0.5 rounded-full bg-white/10 text-muted-foreground border border-white/10">{tag.name}</span>
+                    ))}
+                  </div>
                 </div>
               </div>
-              <div className="flex items-center gap-2 shrink-0">
-                <Badge className={cn("border", workflow.active ? "bg-emerald-500/15 text-emerald-300 border-emerald-500/35" : "bg-amber-500/15 text-amber-300 border-amber-500/35")}>
-                  {workflow.active ? "Published" : "Unpublished"}
-                </Badge>
+              {/* Action button */}
+              <div className="shrink-0 self-end sm:self-auto">
                 <Button
                   variant="outline"
                   size="sm"
                   onClick={() => void toggleWorkflow(workflow)}
                   disabled={actionLoading === workflow.id}
                   className={cn(workflow.active ? "border-rose-500/60 text-rose-300 hover:bg-rose-500/10" : "border-emerald-500/60 text-emerald-300 hover:bg-emerald-500/10")}>
-                  {actionLoading === workflow.id ? "Updating..." : workflow.active ? "Unpublish" : "Publish"}
+                  {actionLoading === workflow.id ? "Updating…" : workflow.active ? "Unpublish" : "Publish"}
                 </Button>
               </div>
             </div>
