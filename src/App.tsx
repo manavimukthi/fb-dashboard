@@ -473,20 +473,17 @@ const useConnectionsConfig = (): Partial<ConnectionsConfig> => {
 };
 
 const resolveN8nApiConfig = (savedConfig: Partial<ConnectionsConfig> = getSavedConnectionsConfig()): { apiBaseUrls: string[]; apiKey: string } => {
-  // Saved connections page value takes priority over .env so users can override from the UI
-  const apiKey = String(
-    savedConfig.n8nApiKey ||
-    import.meta.env.VITE_N8N_API_KEY ||
-    import.meta.env.VITE_N8N_PUBLIC_API_KEY ||
-    ""
-  ).trim();
+  // .env vars are baked into the JS bundle and work in every browser automatically.
+  // savedConfig (localStorage) is only used as a per-device fallback when env var is absent.
+  const envApiKey = String(import.meta.env.VITE_N8N_API_KEY ?? import.meta.env.VITE_N8N_PUBLIC_API_KEY ?? "").trim();
+  const apiKey = envApiKey || String(savedConfig.n8nApiKey ?? "").trim();
 
-  const savedBase = String(savedConfig.n8nApiBaseUrl ?? "").trim();
   const envBase = String(import.meta.env.VITE_N8N_BASE_URL ?? "").trim();
+  const savedBase = String(savedConfig.n8nApiBaseUrl ?? "").trim();
 
   const directBaseCandidates = [savedBase, envBase, DEFAULT_N8N_API_BASE_URL]
     .filter((value, index, array) => value.length > 0 && array.indexOf(value) === index)
-    .map((value) => value.replace(/\/$/, ""));
+    .map((v) => v.replace(/\/$/, ""));
 
   const proxyBase = "/api/n8n";
 
