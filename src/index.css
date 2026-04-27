@@ -44,29 +44,30 @@
   @apply border-border;
 }
 
-/* Smooth scroll for keyboard-induced scroll-to-focused-input on mobile */
-main {
-  scroll-behavior: smooth;
-  -webkit-overflow-scrolling: touch;
-}
-
-/* Prevent virtual keyboard from pushing layout on iOS/Android */
+/* ─── Global mobile keyboard fix ───────────────────────────────────────────
+   html/body are locked to the visual viewport so the keyboard never pushes
+   the page. All scrolling happens inside #root, which tracks the live
+   viewport height via the Visual Viewport API (see main.tsx).              */
 html,
 body {
   height: 100%;
+  overflow: hidden;
   overscroll-behavior: none;
+  /* Prevent iOS rubber-band bounce on the root */
+  position: fixed;
+  width: 100%;
 }
 
 #root {
-  height: var(--vvh, 100dvh);
+  height: 100dvh;
   overflow-y: auto;
   -webkit-overflow-scrolling: touch;
+  overscroll-behavior-y: contain;
 }
 
 body {
   margin: 0;
   min-width: 320px;
-  min-height: 100dvh;
   font-family: "Manrope", sans-serif;
   @apply bg-background text-foreground;
   background-image:
@@ -87,6 +88,12 @@ html.dark body {
     radial-gradient(circle at 0% 10%, rgba(22, 163, 74, 0.2), transparent 32%),
     radial-gradient(circle at 95% 12%, rgba(14, 165, 233, 0.14), transparent 30%),
     linear-gradient(160deg, rgba(6, 22, 31, 0.92), rgba(4, 27, 30, 0.95));
+}
+
+/* Smooth scroll inside the dashboard main content area */
+main {
+  scroll-behavior: smooth;
+  -webkit-overflow-scrolling: touch;
 }
 
 h1,
