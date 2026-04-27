@@ -324,7 +324,7 @@ const LoginPage: React.FC<LoginPageProps> = ({ onSuccess }) => {
   };
 
   return (
-    <div className="min-h-screen w-full flex items-center justify-center bg-gradient-to-br from-background via-background to-muted/20 p-4">
+    <div className="form-wrapper w-full flex items-center justify-center bg-gradient-to-br from-background via-background to-muted/20 p-4">
       <AnimatePresence mode="wait">
         {step === "login" ? (
           <motion.div

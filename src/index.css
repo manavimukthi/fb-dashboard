@@ -44,30 +44,33 @@
   @apply border-border;
 }
 
-/* ─── Global mobile keyboard fix ───────────────────────────────────────────
-   html/body are locked to the visual viewport so the keyboard never pushes
-   the page. All scrolling happens inside #root, which tracks the live
-   viewport height via the Visual Viewport API (see main.tsx).              */
-html,
-body {
+/* ─── Fix 1: Prevent iOS auto-zoom ─────────────────────────────────────────
+   iOS zooms in when a focused input has font-size < 16 px, causing a layout
+   shift. Setting 16 px globally on all form controls stops this completely. */
+input,
+textarea,
+select {
+  font-size: 16px !important;
+}
+
+/* ─── Fix 2: Lock html/body, scroll inside #root ───────────────────────────
+   -webkit-fill-available is the iOS equivalent of 100dvh for html/body.
+   body is locked (overflow: hidden) so the keyboard can never push it.
+   All page-level scrolling happens inside #root.                           */
+html {
+  height: -webkit-fill-available;
   height: 100%;
   overflow: hidden;
   overscroll-behavior: none;
-  /* Prevent iOS rubber-band bounce on the root */
-  position: fixed;
-  width: 100%;
-}
-
-#root {
-  height: 100dvh;
-  overflow-y: auto;
-  -webkit-overflow-scrolling: touch;
-  overscroll-behavior-y: contain;
 }
 
 body {
   margin: 0;
   min-width: 320px;
+  min-height: -webkit-fill-available;
+  min-height: 100dvh;
+  overflow: hidden;
+  overscroll-behavior: none;
   font-family: "Manrope", sans-serif;
   @apply bg-background text-foreground;
   background-image:
@@ -75,6 +78,28 @@ body {
     radial-gradient(circle at 95% 8%, rgba(14, 165, 233, 0.12), transparent 28%),
     linear-gradient(140deg, rgba(255, 255, 255, 0.75), rgba(233, 255, 251, 0.75));
   background-attachment: fixed;
+}
+
+/* #root is the single scroll container for the whole app */
+#root {
+  height: 100dvh;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior-y: contain;
+}
+
+/* ─── Fix 3: Reusable form-wrapper for full-screen form pages ───────────────
+   Apply .form-wrapper to any page that is a standalone form (e.g. login).
+   It pins to the visible viewport and scrolls internally, so the keyboard
+   never pushes content out of view.                                        */
+.form-wrapper {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
 }
 
 /* Dark mode on <html> — covers body, over-scroll bounce area, and safe-area insets */
